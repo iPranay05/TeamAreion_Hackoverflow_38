@@ -1,30 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { Tabs } from 'expo-router';
+import { Stack, router, useSegments, useRootNavigationState } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSize } from '../constants/theme';
 import { SettingsProvider, useSettings } from '../context/SettingsContext';
 import { useShakeDetector } from '../hooks/useShakeDetector';
 import { sendTwilioSMS } from '../utils/twilio';
 import * as Notifications from 'expo-notifications';
-import { Alert, Vibration, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Alert, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import { Audio } from 'expo-av';
 import { SafeRideProvider, useSafeRide } from '../context/SafeRideContext';
 import { isOffRoute } from '../utils/routeMonitor';
 import { triggerLoudAlarm, escalateToFamily, escalateToPolice } from '../utils/emergencyEscalation';
+import { supabase } from '../utils/supabase';
+import { Session } from '@supabase/supabase-js';
 
-// Configure notifications
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Notification handler setup is moved inside RootLayout useEffect to prevent Expo Go crashes
 
 function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
   const { settings, updateSettings } = useSettings();
@@ -32,12 +24,10 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
   const [alarmSound, setAlarmSound] = useState<any>(null);
  
   useEffect(() => {
-    // Auto-enable shake when safe mode is on
     if (settings.safeMode && !settings.shakeToSOS) {
       updateSettings({ shakeToSOS: true });
     }
     
-    // Configure Audio for loud playback
     Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
       playsInSilentModeIOS: true,
@@ -47,12 +37,11 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
     });
   }, [settings.safeMode]);
  
-  // --- Safe Ride Monitoring ---
   useEffect(() => {
     if (!rideState.isTripActive || !rideState.expectedRoute.length || rideState.emergencyPhase !== 'NONE') return;
- 
+
     const checkRoute = async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync(); // Request permission if not granted
+      const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
           const loc = await Location.getCurrentPositionAsync({});
           const offRoute = isOffRoute(loc.coords, rideState.expectedRoute);
@@ -61,18 +50,18 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
           }
       }
     };
- 
-    const interval = setInterval(checkRoute, 10000); // Check every 10s
+
+    const interval = setInterval(checkRoute, 10000);
     return () => clearInterval(interval);
   }, [rideState.isTripActive, rideState.expectedRoute, rideState.emergencyPhase]);
- 
+
   const handleDeviationDetected = async () => {
     setEscalationTimer(10);
     setEmergencyPhase('CHECKING_IN');
     const sound = await triggerLoudAlarm();
     setAlarmSound(sound);
   };
- 
+
   useEffect(() => {
     let interval: any;
     if (rideState.escalationTimer !== null && rideState.escalationTimer > 0) {
@@ -86,18 +75,28 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
   }, [rideState.escalationTimer, rideState.emergencyPhase]);
 
   const handleEscalateToFamily = async () => {
-    console.log("🕒 Timeout reached! Starting escalation...");
-    setEscalationTimer(null); // Clear timer immediately to prevent race conditions
+    setEscalationTimer(null);
     setEmergencyPhase('ESCALATING_FAMILY');
     
     try {
       const loc = await Location.getCurrentPositionAsync({});
-      console.log("📍 Location captured, notifying contacts...");
+      
+      // Log alert to Supabase for Admin Dashboard
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
+      
+      await supabase.from('emergency_alerts').insert([{
+        user_id: user?.id,
+        user_name: profile?.full_name || user?.email,
+        user_phone: profile?.phone_number,
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+        status: 'active'
+      }]);
+
       await escalateToFamily(rideState.cabInfo, loc.coords, settings);
-      console.log("✅ Escalation process complete.");
     } catch (err) {
       console.error("❌ Escalation failed:", err);
-      // Fallback: try alerting if Twilio/Location fails
       Alert.alert("Emergency", "Failed to send automatic alerts. Please try manual SOS.");
     }
   };
@@ -114,31 +113,44 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
 
   const sendSOS = async () => {
     try {
-      // 1. Alert locally immediately - Try catch specifically for this to prevent crash
       try {
         await Notifications.scheduleNotificationAsync({
           content: { title: "SOS Triggered! 🚨", body: "Sending emergency alerts to your contacts..." },
           trigger: null,
         });
       } catch (e) {
-        console.warn("Notifications not supported in this environment:", e);
+        console.warn("Local notification failed (likely Expo Go limitation):", e);
         Alert.alert("SOS Triggered! 🚨", "Sending emergency alerts to your contacts...");
       }
 
       const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
       const contacts = savedContacts ? JSON.parse(savedContacts) : [];
       
-      if (contacts.length === 0) {
-        console.log('No contacts found');
-        return;
-      }
-
       const { status } = await Location.requestForegroundPermissionsAsync();
+      let locData = null;
       let locationLink = '';
       if (status === 'granted') {
         const loc = await Location.getCurrentPositionAsync({});
+        locData = loc;
         locationLink = `https://www.google.com/maps?q=${loc.coords.latitude}%2C${loc.coords.longitude}`;
       }
+
+      // Log alert to Supabase for Admin Dashboard
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
+      
+      if (locData) {
+        await supabase.from('emergency_alerts').insert([{
+          user_id: user?.id,
+          user_name: profile?.full_name || user?.email,
+          user_phone: profile?.phone_number,
+          latitude: locData.coords.latitude,
+          longitude: locData.coords.longitude,
+          status: 'active'
+        }]);
+      }
+
+      if (contacts.length === 0) return;
 
       const message = settings.sosMessage.replace('{link}', locationLink);
       
@@ -166,11 +178,9 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
           <Ionicons name="alert-circle" size={80} color={Colors.sos} />
           <Text style={gs.emergencyTitle}>Route Deviation Detected!</Text>
           <Text style={gs.emergencySubtitle}>Are you okay? We will call your family in {rideState.escalationTimer ?? 10}s if you don't respond.</Text>
-          
           <TouchableOpacity style={gs.imSafeBtn} onPress={stopGlobalAlarm}>
             <Text style={gs.imSafeText}>YES, I AM SAFE</Text>
           </TouchableOpacity>
-
           <TouchableOpacity style={gs.callPoliceNow} onPress={async () => {
              const loc = await Location.getCurrentPositionAsync({});
              await escalateToPolice(rideState.cabInfo, loc.coords, settings);
@@ -194,24 +204,62 @@ const gs = StyleSheet.create({
 });
 
 export default function RootLayout() {
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const segments = useSegments();
+  const navigationState = useRootNavigationState();
+
+  useEffect(() => {
+    // Graceful notification setup for Expo Go
+    try {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowAlert: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+          shouldShowBanner: true,
+          shouldShowList: true,
+        }),
+      });
+    } catch (e) {
+      console.warn("Notifications setup failed:", e);
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    }).catch(() => setSession(null));
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!navigationState?.key || session === undefined) return;
+
+    const inAuthGroup = segments[0] === 'auth';
+
+    // Using a microtask/timeout to ensure the Root Layout has finished its first render
+    const timeout = setTimeout(() => {
+      if (!session && !inAuthGroup) {
+        router.replace('/auth');
+      } else if (session && inAuthGroup) {
+        router.replace('/(tabs)');
+      }
+    }, 1);
+
+    return () => clearTimeout(timeout);
+  }, [session, segments, navigationState?.key]);
+
   return (
     <SettingsProvider>
       <SafeRideProvider>
         <GlobalSOSHandler>
-          <Tabs
-            screenOptions={{
-              headerShown: false,
-              tabBarStyle: { backgroundColor: Colors.surface, borderTopColor: Colors.border, borderTopWidth: 1, height: 64, paddingBottom: 8 },
-              tabBarActiveTintColor: Colors.sos, tabBarInactiveTintColor: Colors.textMuted,
-              tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-            }}
-          >
-            <Tabs.Screen name="index" options={{ title: 'Home', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="shield-checkmark" size={size} color={color} /> }} />
-            <Tabs.Screen name="contacts" options={{ title: 'Contacts', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="people" size={size} color={color} /> }} />
-            <Tabs.Screen name="map" options={{ title: 'Map', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="map" size={size} color={color} /> }} />
-            <Tabs.Screen name="complaints" options={{ title: 'Report', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="document-text-outline" size={size} color={color} /> }} />
-            <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="settings-outline" size={size} color={color} /> }} />
-          </Tabs>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="auth" />
+            <Stack.Screen name="(tabs)" />
+          </Stack>
         </GlobalSOSHandler>
       </SafeRideProvider>
     </SettingsProvider>

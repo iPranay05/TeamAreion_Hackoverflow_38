@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Switch, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius, FontSize } from '../constants/theme';
-import { useSettings } from '../context/SettingsContext';
-import { registerBackgroundSOS, unregisterBackgroundSOS } from '../utils/backgroundSOS';
+import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
+import { useSettings } from '../../context/SettingsContext';
+import { registerBackgroundSOS, unregisterBackgroundSOS } from '../../utils/backgroundSOS';
+import { supabase } from '../../utils/supabase';
 
 export default function SettingsScreen() {
   const { settings, updateSettings } = useSettings();
@@ -15,6 +16,11 @@ export default function SettingsScreen() {
     if (v) await registerBackgroundSOS();
     else await unregisterBackgroundSOS();
     updateSettings({ safeMode: v });
+  };
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error('Logout error:', error);
   };
 
   return (
@@ -68,6 +74,13 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        <View style={s.group}>
+          <TouchableOpacity style={s.logoutBtn} onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={20} color={Colors.white} style={{ marginRight: 8 }} />
+            <Text style={s.logoutText}>Sign Out of SafeStree</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={s.f}>
           <Ionicons name="shield-checkmark" size={24} color={Colors.textMuted} /><Text style={s.fT}>WomenSafe App v1.0.0</Text>
         </View>
@@ -86,5 +99,7 @@ const s = StyleSheet.create({
   cL: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600', marginBottom: Spacing.sm }, cS: { color: Colors.textSecondary, fontSize: FontSize.xs, marginBottom: Spacing.md },
   cL2: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600', marginBottom: 2 }, cS2: { color: Colors.textSecondary, fontSize: FontSize.xs },
   input: { backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm, padding: Spacing.md, color: Colors.text, fontSize: FontSize.md }, mA: { height: 80, textAlignVertical: 'top' },
-  f: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xxl, gap: Spacing.xs, opacity: 0.5 }, fT: { color: Colors.textMuted, fontSize: FontSize.sm, fontWeight: '600' }
+  f: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xxl, gap: Spacing.xs, opacity: 0.5 }, fT: { color: Colors.textMuted, fontSize: FontSize.sm, fontWeight: '600' },
+  logoutBtn: { backgroundColor: Colors.sos, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: Spacing.lg, borderRadius: Radius.md, marginTop: Spacing.md },
+  logoutText: { color: Colors.white, fontSize: FontSize.md, fontWeight: '800' }
 });

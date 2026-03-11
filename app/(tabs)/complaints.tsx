@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius, FontSize } from '../constants/theme';
+import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
-import { supabase } from '../utils/supabase';
+import { supabase } from '../../utils/supabase';
 
 const COMPLAINTS_KEY = '@app_complaints';
 
@@ -32,8 +32,20 @@ export default function ComplaintsScreen() {
   const [loadingLoc, setLoadingLoc] = useState(false);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [userProfile, setUserProfile] = useState<{name: string, phone: string} | null>(null);
 
-  useEffect(() => { loadComplaints(); }, []);
+  useEffect(() => { 
+    loadComplaints();
+    fetchUserProfile();
+  }, []);
+
+  const fetchUserProfile = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      if (data) setUserProfile({ name: data.full_name, phone: data.phone_number });
+    }
+  };
 
   const loadComplaints = async () => {
     try {
@@ -75,20 +87,29 @@ export default function ComplaintsScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!description.trim()) { Alert.alert('Error', 'Please provide a description'); return; }
+    if (!description.trim()) {
+      Alert.alert('Error', 'Please provide a description');
+      return;
+    }
     setSubmitting(true);
-    
+
     try {
-      const { error } = await supabase
-        .from('complaints')
-        .insert([{
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const { error } = await supabase.from('complaints').insert([
+        {
           category,
           description,
           location_addr: addr || 'Not specified',
           latitude: coords?.lat,
           longitude: coords?.lng,
-          status: 'pending'
-        }]);
+          status: 'pending',
+          user_id: user?.id,
+          user_email: user?.email,
+          user_name: userProfile?.name,
+          user_phone: userProfile?.phone,
+        },
+      ]);
 
       if (error) throw error;
 

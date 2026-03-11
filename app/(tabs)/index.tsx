@@ -2,20 +2,20 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, StatusBar } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius, FontSize } from '../constants/theme';
-import SOSButton from '../components/SOSButton';
-import SafeWalkTimer from '../components/SafeWalkTimer';
-import FakeCallModal from '../components/FakeCallModal';
-import { useLocation } from '../hooks/useLocation';
-import { useContacts } from '../hooks/useContacts';
-import { useShakeDetector } from '../hooks/useShakeDetector';
-import { useSettings } from '../context/SettingsContext';
-import { sendTwilioSMS } from '../utils/twilio';
-import { registerBackgroundSOS, unregisterBackgroundSOS } from '../utils/backgroundSOS';
+import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
+import SOSButton from '../../components/SOSButton';
+import SafeWalkTimer from '../../components/SafeWalkTimer';
+import FakeCallModal from '../../components/FakeCallModal';
+import { useLocation } from '../../hooks/useLocation';
+import { useContacts } from '../../hooks/useContacts';
+import { useShakeDetector } from '../../hooks/useShakeDetector';
+import { useSettings } from '../../context/SettingsContext';
+import { sendTwilioSMS } from '../../utils/twilio';
+import { registerBackgroundSOS, unregisterBackgroundSOS } from '../../utils/backgroundSOS';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, router } from 'expo-router';
 
-import { useSafeRide } from '../context/SafeRideContext';
+import { useSafeRide } from '../../context/SafeRideContext';
 
 export default function HomeScreen() {
   const { location, requestLocation, getMapLink } = useLocation();
