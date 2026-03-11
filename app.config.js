@@ -1,8 +1,8 @@
-{
+export default {
   "expo": {
-    "name": "WomenSafe",
-    "slug": "WomenSafetyApp54",
-    "scheme": "womensafe",
+    "name": "SafeStree",
+    "slug": "SafeStree",
+    "scheme": "safestree",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -22,7 +22,7 @@
       },
       "bundleIdentifier": "com.prana.womensafe",
       "config": {
-        "googleMapsApiKey": "PLACEHOLDER_KEY"
+        "googleMapsApiKey": process.env.GOOGLE_MAPS_API_KEY
       }
     },
     "android": {
@@ -33,7 +33,7 @@
       },
       "config": {
         "googleMaps": {
-          "apiKey": "PLACEHOLDER_KEY"
+          "apiKey": process.env.GOOGLE_MAPS_API_KEY
         }
       },
       "permissions": [
@@ -62,4 +62,4 @@
       "expo-notifications"
     ]
   }
-}
+};
