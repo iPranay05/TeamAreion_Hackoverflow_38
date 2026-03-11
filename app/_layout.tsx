@@ -209,6 +209,7 @@ export default function RootLayout() {
             <Tabs.Screen name="index" options={{ title: 'Home', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="shield-checkmark" size={size} color={color} /> }} />
             <Tabs.Screen name="contacts" options={{ title: 'Contacts', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="people" size={size} color={color} /> }} />
             <Tabs.Screen name="map" options={{ title: 'Map', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="map" size={size} color={color} /> }} />
+            <Tabs.Screen name="complaints" options={{ title: 'Report', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="document-text-outline" size={size} color={color} /> }} />
             <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: ({ color, size }: { color: string; size: number }) => <Ionicons name="settings-outline" size={size} color={color} /> }} />
           </Tabs>
         </GlobalSOSHandler>

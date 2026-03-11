@@ -14,6 +14,7 @@ import CabInfoModal from '../components/CabInfoModal';
 import SafeWalkTimer from '../components/SafeWalkTimer';
 import { isOffRoute } from '../utils/routeMonitor';
 import { triggerLoudAlarm, escalateToFamily, escalateToPolice } from '../utils/emergencyEscalation';
+import { supabase } from '../utils/supabase';
 
 const HELPLINES = [
   { id: '1', name: 'National Emergency', number: '112', desc: 'All-in-one emergency number' },
@@ -29,6 +30,7 @@ export default function MapScreen() {
   const { rideState, startRide, stopRide, setEmergencyPhase, setEscalationTimer } = useSafeRide();
   const [viewMode, setViewMode] = useState<'heatmap' | 'helplines'>('heatmap');
   const [selectedDestination, setSelectedDestination] = useState<{ latitude: number, longitude: number, name?: string } | null>(null);
+  const [unsafeSpots, setUnsafeSpots] = useState<any[]>([]);
   const [searchText, setSearchText] = useState('');
   const [searching, setSearching] = useState(false);
   const [routeData, setRouteData] = useState<{ distance: string, time: string } | null>(null);
@@ -111,7 +113,20 @@ export default function MapScreen() {
         setSelectedDestination(rideState.destination);
       }
     }
+    loadUnsafeSpots();
   }, [rideState.isTripActive, rideState.destination]);
+
+  const loadUnsafeSpots = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('complaints')
+        .select('*')
+        .eq('status', 'approved');
+      if (data) setUnsafeSpots(data);
+    } catch (e) {
+      console.error('Error loading unsafe spots:', e);
+    }
+  };
 
   useEffect(() => {
     if (location && selectedDestination) {
@@ -295,6 +310,19 @@ export default function MapScreen() {
                   )}
                 </>
               )}
+
+              {unsafeSpots.map(spot => (
+                <Marker
+                  key={spot.id}
+                  coordinate={{ latitude: spot.latitude, longitude: spot.longitude }}
+                  title={`Unsafe Area: ${spot.category}`}
+                  description={spot.description}
+                >
+                  <View style={s.unsafeMarker}>
+                    <Ionicons name="warning" size={20} color={Colors.sos} />
+                  </View>
+                </Marker>
+              ))}
               {/* Heatmap remains the same */}
               <Heatmap
                 points={MOCK_INCIDENT_DATA}
@@ -454,6 +482,7 @@ const s = StyleSheet.create({
   hC: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, borderRadius: Radius.md, padding: Spacing.md, marginBottom: Spacing.sm, borderWidth: 1, borderColor: Colors.border },
   hI: { flex: 1 }, hN: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600' }, hD: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 2 },
   hAc: { backgroundColor: Colors.safe, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.full, gap: Spacing.xs },
-  hAcT: { color: Colors.white, fontWeight: '800', fontSize: FontSize.sm }
+  hAcT: { color: Colors.white, fontWeight: '800', fontSize: FontSize.sm },
+  unsafeMarker: { backgroundColor: 'rgba(255,59,48,0.2)', padding: 6, borderRadius: 20, borderWidth: 1, borderColor: Colors.sos }
 });
 
