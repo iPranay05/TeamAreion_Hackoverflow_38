@@ -15,13 +15,29 @@ import { isOffRoute } from '../utils/routeMonitor';
 import { triggerLoudAlarm, escalateToFamily, escalateToPolice } from '../utils/emergencyEscalation';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
+import SafetyAIChatbot from '../components/SafetyAIChatbot';
 
 // Notification handler setup is moved inside RootLayout useEffect to prevent Expo Go crashes
 
-function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
+function GlobalSOSHandler({ children, session }: { children: React.ReactNode; session: Session | null | undefined }) {
   const { settings, updateSettings } = useSettings();
   const { rideState, setEmergencyPhase, setEscalationTimer } = useSafeRide();
   const [alarmSound, setAlarmSound] = useState<any>(null);
+  const [isMounted, setIsMounted] = useState(false);
+ 
+  useEffect(() => {
+    // Delay chatbot mount for better initial load performance
+    const timer = setTimeout(() => setIsMounted(true), 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    // Debug shake detector
+    console.log('Shake detector settings:', {
+      shakeToSOS: settings.shakeToSOS,
+      safeMode: settings.safeMode
+    });
+  }, [settings.shakeToSOS, settings.safeMode]);
  
   useEffect(() => {
     if (settings.safeMode && !settings.shakeToSOS) {
@@ -124,7 +140,15 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
       }
 
       const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
-      const contacts = savedContacts ? JSON.parse(savedContacts) : [];
+      let contacts = [];
+      
+      try {
+        const parsedContacts = savedContacts ? JSON.parse(savedContacts) : [];
+        contacts = Array.isArray(parsedContacts) ? parsedContacts : [];
+      } catch (parseError) {
+        console.warn('Failed to parse emergency contacts:', parseError);
+        contacts = [];
+      }
       
       const { status } = await Location.requestForegroundPermissionsAsync();
       let locData = null;
@@ -150,18 +174,23 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
         }]);
       }
 
-      if (contacts.length === 0) return;
+      if (!Array.isArray(contacts) || contacts.length === 0) {
+        console.warn('No valid emergency contacts found');
+        return;
+      }
 
       const message = settings.sosMessage.replace('{link}', locationLink);
       
       for (const contact of contacts) {
-        await sendTwilioSMS(
-          contact.phone,
-          message,
-          settings.twilioSid,
-          settings.twilioToken,
-          settings.twilioNumber
-        );
+        if (contact && contact.phone) {
+          await sendTwilioSMS(
+            contact.phone,
+            message,
+            settings.twilioSid,
+            settings.twilioToken,
+            settings.twilioNumber
+          );
+        }
       }
     } catch (err) {
       console.error('SOS Background Error:', err);
@@ -173,6 +202,8 @@ function GlobalSOSHandler({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
+      {/* Only show chatbot when user is authenticated (not on auth pages) */}
+      {isMounted && session && <SafetyAIChatbot />}
       {rideState.emergencyPhase !== 'NONE' && (
         <View style={gs.emergencyOverlay}>
           <Ionicons name="alert-circle" size={80} color={Colors.sos} />
@@ -255,7 +286,7 @@ export default function RootLayout() {
   return (
     <SettingsProvider>
       <SafeRideProvider>
-        <GlobalSOSHandler>
+        <GlobalSOSHandler session={session}>
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="auth" />
             <Stack.Screen name="(tabs)" />

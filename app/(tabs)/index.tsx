@@ -1,194 +1,382 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, StatusBar } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
-import SOSButton from '../../components/SOSButton';
-import SafeWalkTimer from '../../components/SafeWalkTimer';
 import FakeCallModal from '../../components/FakeCallModal';
 import { useLocation } from '../../hooks/useLocation';
 import { useContacts } from '../../hooks/useContacts';
-import { useShakeDetector } from '../../hooks/useShakeDetector';
 import { useSettings } from '../../context/SettingsContext';
-import { sendTwilioSMS } from '../../utils/twilio';
-import { registerBackgroundSOS, unregisterBackgroundSOS } from '../../utils/backgroundSOS';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useLocalSearchParams, router } from 'expo-router';
-
+import { router } from 'expo-router';
 import { useSafeRide } from '../../context/SafeRideContext';
 
 export default function HomeScreen() {
-  const { location, requestLocation, getMapLink } = useLocation();
+  const { location } = useLocation();
   const { contacts } = useContacts();
-  const { settings, updateSettings } = useSettings();
-  const { rideState, stopRide, setEmergencyPhase, setEscalationTimer } = useSafeRide();
-  const [sending, setSending] = useState(false);
+  const { settings } = useSettings();
+  const { rideState } = useSafeRide();
   const [fakeCallVisible, setFakeCallVisible] = useState(false);
-  const params = useLocalSearchParams();
 
-  const sendManualSOS = async () => {
-    setSending(true);
-    try {
-      const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
-      const contacts = savedContacts ? JSON.parse(savedContacts) : [];
-      if (contacts.length === 0) { Alert.alert('No Contacts', 'Add emergency contacts first.'); return; }
-
-      const loc = await requestLocation();
-      const link = getMapLink(loc);
-      const message = settings.sosMessage.replace('{link}', link || 'Location blocked');
-      
-      for (const contact of contacts) {
-        await sendTwilioSMS(contact.phone, message, settings.twilioSid, settings.twilioToken, settings.twilioNumber);
-      }
-      Alert.alert('SOS Sent', 'Your contacts have been notified.');
-    } catch (err: any) {
-      Alert.alert('Success', 'SOS Sent');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const toggleSafeMode = async () => {
-    const next = !settings.safeMode;
-    if (next) await registerBackgroundSOS();
-    else await unregisterBackgroundSOS();
-    updateSettings({ safeMode: next });
-  };
 
   return (
     <View style={s.container}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
-      <View style={s.header}>
-        <View><Text style={s.greeting}>Stay Safe,</Text><Text style={s.userName}>{settings.userName} 💜</Text></View>
-        <TouchableOpacity style={[s.statusBadge, settings.safeMode && s.statusBadgeActive]} onPress={toggleSafeMode}>
-          <View style={[s.dot, settings.safeMode ? s.dotSafe : (location ? s.dotGreen : s.dotRed)]} />
-          <Text style={s.statusText}>{settings.safeMode ? 'Safe Mode On' : (location ? 'GPS On' : 'No GPS')}</Text>
-        </TouchableOpacity>
-      </View>
-      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
-        {settings.safeMode && (
-          <View style={s.safeBanner}>
-            <Ionicons name="lock-closed" size={16} color={Colors.white} />
-            <Text style={s.safeBannerText}>Triple-shake SOS is active in background</Text>
-          </View>
-        )}
-        <View style={s.sosWrapper}>
-          {rideState.isTripActive ? (
-            <View style={s.tripPreview}>
-              {rideState.tripType === 'driving' ? (
-                <>
-                  <View style={s.tripInfo}>
-                    <View style={[s.actionIcon, { backgroundColor: '#FDE68A', width: 60, height: 60 }]}>
-                        <Ionicons name="car" size={32} color="#D97706" />
-                    </View>
-                    <View style={s.tripText}>
-                      <Text style={s.tripHeading}>Safe Ride Active</Text>
-                      <Text style={s.tripSub}>{rideState.cabInfo?.plateNumber || 'Cab'} • {rideState.cabInfo?.driverName || 'Driver'}</Text>
-                    </View>
-                  </View>
-                  <View style={s.cabDetailsCard}>
-                    <Text style={s.cabStatusLabel}>Monitoring your route silently...</Text>
-                    <View style={s.demoActions}>
-                      <TouchableOpacity style={s.stopRideHomeBtn} onPress={stopRide}>
-                        <Text style={s.stopRideText}>Stop Ride</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        style={s.demoBtn} 
-                        onPress={() => {
-                          Alert.alert("Demo Mode", "Simulating route detour for judges...");
-                          setEscalationTimer(10);
-                          setEmergencyPhase('CHECKING_IN');
-                        }}
-                      >
-                        <Ionicons name="flask" size={16} color={Colors.white} />
-                        <Text style={s.demoBtnText}>Test Detour</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <View style={s.tripInfo}>
-                    <Ionicons name="navigate-circle" size={40} color={Colors.sos} />
-                    <View style={s.tripText}>
-                      <Text style={s.tripHeading}>Journey to Destination</Text>
-                      <Text style={s.tripSub}>{rideState.destination?.name || 'Staying on path for safety'}</Text>
-                    </View>
-                  </View>
-                  <SafeWalkTimer 
-                    onTimeout={sendManualSOS} 
-                    destination={rideState.destination} 
-                    onCancel={stopRide}
-                  />
-                </>
-              )}
-            </View>
-          ) : (
-            <>
-              <SOSButton onPress={sendManualSOS} sending={sending} />
-              <Text style={s.sosHint}>{settings.shakeToSOS ? '📳 Shake phone to activate' : 'Tap to send SOS'}</Text>
-            </>
-          )}
+      
+      {/* Welcome Header */}
+      <View style={s.welcomeHeader}>
+        <View>
+          <Text style={s.welcomeText}>Welcome,</Text>
+          <Text style={s.userName}>{settings.userName} 💜</Text>
         </View>
-        {!rideState.isTripActive && <Text style={s.sectionTitle}>Quick Actions</Text>}
-        {!rideState.isTripActive && (
-          <TouchableOpacity style={s.actionCard} onPress={() => setFakeCallVisible(true)}>
-            <View style={[s.actionIcon, { backgroundColor: Colors.safeGlow }]}><Ionicons name="call" size={22} color={Colors.safe} /></View>
-            <View style={s.actionText}><Text style={s.actionTitle}>Fake Call</Text><Text style={s.actionSub}>Simulate incoming call</Text></View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
+        <View style={[s.statusBadge, location && s.statusBadgeActive]}>
+          <View style={[s.dot, location ? s.dotGreen : s.dotRed]} />
+          <Text style={s.statusText}>{location ? 'Protected' : 'No GPS'}</Text>
+        </View>
+      </View>
+
+      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+        
+        {/* Fake Call Card */}
+        <TouchableOpacity style={s.fakeCallCard} onPress={() => setFakeCallVisible(true)}>
+          <View style={s.fakeCallIcon}>
+            <Ionicons name="call" size={28} color={Colors.safe} />
+          </View>
+          <View style={s.fakeCallContent}>
+            <Text style={s.fakeCallTitle}>Fake Call</Text>
+            <Text style={s.fakeCallSubtitle}>Simulate incoming call to escape uncomfortable situations</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={24} color={Colors.textMuted} />
+        </TouchableOpacity>
+
+        {/* App Info Section */}
+        <View style={s.appInfoSection}>
+          <Text style={s.sectionTitle}>Quick Overview</Text>
+          
+          {/* Safe Travel Card */}
+          <TouchableOpacity style={s.infoCard} onPress={() => router.push('/map')}>
+            <View style={s.infoCardHeader}>
+              <View style={[s.infoIcon, { backgroundColor: '#FDE68A' }]}>
+                <Ionicons name="navigate" size={24} color="#D97706" />
+              </View>
+              <View style={s.infoCardContent}>
+                <Text style={s.infoCardTitle}>Safe Travel</Text>
+                <Text style={s.infoCardDesc}>
+                  {rideState.isTripActive 
+                    ? `Active ${rideState.tripType === 'driving' ? 'Ride' : 'Walk'} in progress`
+                    : 'Monitor your journey with route tracking'}
+                </Text>
+              </View>
+              <Ionicons name="arrow-forward" size={20} color={Colors.accent} />
+            </View>
+            {rideState.isTripActive && (
+              <View style={s.activeIndicator}>
+                <View style={s.activeDot} />
+                <Text style={s.activeText}>Currently Active</Text>
+              </View>
+            )}
           </TouchableOpacity>
-        )}
-        <TouchableOpacity style={s.actionCard} onPress={() => router.push('/map')}>
-          <View style={[s.actionIcon, { backgroundColor: '#FDE68A' }]}><Ionicons name="car" size={22} color="#D97706" /></View>
-          <View style={s.actionText}><Text style={s.actionTitle}>Safe Ride (Cab/Auto)</Text><Text style={s.actionSub}>Monitor your ride and detour routes</Text></View>
-          <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-        </TouchableOpacity>
-        <TouchableOpacity style={s.actionCard} onPress={async () => {
-          const loc = await requestLocation(); const link = getMapLink(loc);
-          if (link) Alert.alert('Your Location', link);
-        }}>
-          <View style={[s.actionIcon, { backgroundColor: Colors.accentGlow }]}><Ionicons name="location" size={22} color={Colors.accent} /></View>
-          <View style={s.actionText}><Text style={s.actionTitle}>Share Location</Text><Text style={s.actionSub}>Get your live location link</Text></View>
-          <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} />
-        </TouchableOpacity>
-        <View style={s.infoCard}>
-          <Ionicons name="people-circle" size={20} color={Colors.accent} />
-          <Text style={s.infoText}>{contacts.length > 0 ? `${contacts.length} emergency contact(s) will be alerted` : 'No contacts added — go to Contacts tab'}</Text>
+
+          {/* Emergency Contacts Card */}
+          <TouchableOpacity style={s.infoCard} onPress={() => router.push('/(tabs)/contacts')}>
+            <View style={s.infoCardHeader}>
+              <View style={[s.infoIcon, { backgroundColor: Colors.accentGlow }]}>
+                <Ionicons name="people" size={24} color={Colors.accent} />
+              </View>
+              <View style={s.infoCardContent}>
+                <Text style={s.infoCardTitle}>Emergency Contacts</Text>
+                <Text style={s.infoCardDesc}>
+                  {contacts.length > 0 
+                    ? `${contacts.length} contact(s) will be alerted during SOS`
+                    : 'Add trusted contacts for emergencies'}
+                </Text>
+              </View>
+              <Ionicons name="arrow-forward" size={20} color={Colors.accent} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Community Card */}
+          <TouchableOpacity style={s.infoCard} onPress={() => router.push('/(tabs)/community')}>
+            <View style={s.infoCardHeader}>
+              <View style={[s.infoIcon, { backgroundColor: Colors.sosGlow }]}>
+                <Ionicons name="people-circle" size={24} color={Colors.sos} />
+              </View>
+              <View style={s.infoCardContent}>
+                <Text style={s.infoCardTitle}>Community</Text>
+                <Text style={s.infoCardDesc}>Share experiences and report incidents</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={20} color={Colors.accent} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Safety Map Card */}
+          <TouchableOpacity style={s.infoCard} onPress={() => router.push('/(tabs)/map')}>
+            <View style={s.infoCardHeader}>
+              <View style={[s.infoIcon, { backgroundColor: '#DBEAFE' }]}>
+                <Ionicons name="map" size={24} color="#3B82F6" />
+              </View>
+              <View style={s.infoCardContent}>
+                <Text style={s.infoCardTitle}>Safety Map</Text>
+                <Text style={s.infoCardDesc}>View unsafe areas and plan safe routes</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={20} color={Colors.accent} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Helplines Card */}
+          <View style={s.helplinesCard}>
+            <View style={s.helplinesHeader}>
+              <Ionicons name="call" size={20} color={Colors.sos} />
+              <Text style={s.helplinesTitle}>Emergency Helplines</Text>
+            </View>
+            <View style={s.helplinesList}>
+              <View style={s.helplineItem}>
+                <Text style={s.helplineNumber}>112</Text>
+                <Text style={s.helplineName}>National Emergency</Text>
+              </View>
+              <View style={s.helplineItem}>
+                <Text style={s.helplineNumber}>1091</Text>
+                <Text style={s.helplineName}>Women Helpline</Text>
+              </View>
+              <View style={s.helplineItem}>
+                <Text style={s.helplineNumber}>100</Text>
+                <Text style={s.helplineName}>Police</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Safety Tips */}
+        <View style={s.tipsCard}>
+          <View style={s.tipsHeader}>
+            <Ionicons name="bulb" size={20} color="#F59E0B" />
+            <Text style={s.tipsTitle}>Safety Tip</Text>
+          </View>
+          <Text style={s.tipsText}>
+            Always share your live location with trusted contacts when traveling alone, especially at night.
+          </Text>
         </View>
       </ScrollView>
-      <FakeCallModal visible={fakeCallVisible} callerName={settings.fakeCaller} onDismiss={() => setFakeCallVisible(false)} />
+
+      <FakeCallModal 
+        visible={fakeCallVisible} 
+        callerName={settings.fakeCaller} 
+        onDismiss={() => setFakeCallVisible(false)} 
+      />
     </View>
   );
 }
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingTop: 52, paddingBottom: Spacing.lg },
-  greeting: { color: Colors.textSecondary, fontSize: FontSize.sm }, userName: { color: Colors.text, fontSize: FontSize.xl, fontWeight: '800' },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs, borderRadius: Radius.full, gap: Spacing.xs, borderWidth: 1, borderColor: Colors.border },
-  statusBadgeActive: { backgroundColor: Colors.sos, borderColor: Colors.sos },
-  dot: { width: 8, height: 8, borderRadius: 4 }, dotGreen: { backgroundColor: Colors.safe }, dotRed: { backgroundColor: Colors.sos }, dotSafe: { backgroundColor: Colors.white },
-  statusText: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: '600' },
-  safeBanner: { backgroundColor: Colors.sos, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: Spacing.sm, borderRadius: Radius.md, gap: Spacing.xs, marginBottom: Spacing.md },
-  safeBannerText: { color: Colors.white, fontSize: FontSize.xs, fontWeight: '700' },
-  scroll: { flex: 1 }, scrollContent: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.xl },
-  sosWrapper: { alignItems: 'center', marginVertical: Spacing.xl }, sosHint: { color: Colors.textMuted, fontSize: FontSize.xs, marginTop: Spacing.md, letterSpacing: 1 },
-  sectionTitle: { color: Colors.text, fontSize: FontSize.md, fontWeight: '700', marginBottom: Spacing.sm, marginTop: Spacing.sm },
-  actionCard: { backgroundColor: Colors.card, borderRadius: Radius.md, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: Colors.border, marginBottom: Spacing.sm },
-  actionIcon: { width: 44, height: 44, borderRadius: Radius.sm, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md },
-  actionText: { flex: 1 }, actionTitle: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600' }, actionSub: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 2 },
-  infoCard: { backgroundColor: Colors.glass, borderRadius: Radius.md, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, borderWidth: 1, borderColor: Colors.border, marginTop: Spacing.sm },
-  infoText: { color: Colors.textSecondary, fontSize: FontSize.sm, flex: 1 },
-  tripPreview: { width: '100%', backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, borderWidth: 1, borderColor: Colors.border, elevation: 4 },
-  tripInfo: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginBottom: Spacing.lg },
-  tripText: { flex: 1 },
-  tripHeading: { color: Colors.text, fontSize: FontSize.lg, fontWeight: '800' },
-  tripSub: { color: Colors.textSecondary, fontSize: FontSize.sm },
-  cabDetailsCard: { backgroundColor: Colors.background, borderRadius: Radius.md, padding: Spacing.md, marginTop: Spacing.xs },
-  cabStatusLabel: { color: Colors.textSecondary, fontSize: FontSize.xs, fontStyle: 'italic', marginBottom: Spacing.md },
-  stopRideHomeBtn: { backgroundColor: Colors.textMuted, paddingVertical: Spacing.sm, borderRadius: Radius.sm, alignItems: 'center', flex: 1 },
-  stopRideText: { color: Colors.white, fontSize: FontSize.sm, fontWeight: '700' },
-  demoActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm },
-  demoBtn: { backgroundColor: Colors.sos, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: Radius.sm, gap: Spacing.xs, flex: 1.2 },
-  demoBtnText: { color: Colors.white, fontSize: FontSize.xs, fontWeight: '800' },
+  welcomeHeader: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    paddingHorizontal: Spacing.lg, 
+    paddingTop: 60, 
+    paddingBottom: Spacing.xl,
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border
+  },
+  welcomeText: { 
+    color: Colors.textSecondary, 
+    fontSize: FontSize.md,
+    fontWeight: '600'
+  },
+  userName: { 
+    color: Colors.text, 
+    fontSize: FontSize.xxl, 
+    fontWeight: '900',
+    marginTop: 4
+  },
+  statusBadge: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: Colors.card, 
+    paddingHorizontal: Spacing.md, 
+    paddingVertical: Spacing.sm, 
+    borderRadius: Radius.full, 
+    gap: Spacing.xs, 
+    borderWidth: 1, 
+    borderColor: Colors.border 
+  },
+  statusBadgeActive: { 
+    backgroundColor: Colors.safeGlow, 
+    borderColor: Colors.safe 
+  },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  dotGreen: { backgroundColor: Colors.safe },
+  dotRed: { backgroundColor: Colors.sos },
+  statusText: { 
+    color: Colors.textSecondary, 
+    fontSize: FontSize.xs, 
+    fontWeight: '700' 
+  },
+  scroll: { flex: 1 },
+  scrollContent: { paddingBottom: Spacing.xxl },
+  
+  fakeCallCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+    padding: Spacing.lg,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4
+  },
+  fakeCallIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: Colors.safeGlow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md
+  },
+  fakeCallContent: { flex: 1 },
+  fakeCallTitle: {
+    color: Colors.text,
+    fontSize: FontSize.lg,
+    fontWeight: '800',
+    marginBottom: 4
+  },
+  fakeCallSubtitle: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    lineHeight: 18
+  },
+  
+  appInfoSection: {
+    marginTop: Spacing.xl,
+    paddingHorizontal: Spacing.lg
+  },
+  sectionTitle: {
+    color: Colors.text,
+    fontSize: FontSize.lg,
+    fontWeight: '800',
+    marginBottom: Spacing.md
+  },
+  infoCard: {
+    backgroundColor: Colors.card,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.sm
+  },
+  infoCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  infoIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: Radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md
+  },
+  infoCardContent: { flex: 1 },
+  infoCardTitle: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  infoCardDesc: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    lineHeight: 18
+  },
+  activeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border
+  },
+  activeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.safe,
+    marginRight: Spacing.xs
+  },
+  activeText: {
+    color: Colors.safe,
+    fontSize: FontSize.xs,
+    fontWeight: '700'
+  },
+  
+  helplinesCard: {
+    backgroundColor: Colors.card,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: Spacing.sm
+  },
+  helplinesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    gap: Spacing.xs
+  },
+  helplinesTitle: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontWeight: '700'
+  },
+  helplinesList: {
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  helplineItem: {
+    alignItems: 'center'
+  },
+  helplineNumber: {
+    color: Colors.sos,
+    fontSize: FontSize.lg,
+    fontWeight: '900',
+    marginBottom: 4
+  },
+  helplineName: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    textAlign: 'center'
+  },
+  
+  tipsCard: {
+    backgroundColor: '#FEF3C7',
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: '#FDE68A'
+  },
+  tipsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+    gap: Spacing.xs
+  },
+  tipsTitle: {
+    color: '#92400E',
+    fontSize: FontSize.sm,
+    fontWeight: '800'
+  },
+  tipsText: {
+    color: '#78350F',
+    fontSize: FontSize.xs,
+    lineHeight: 18
+  }
 });

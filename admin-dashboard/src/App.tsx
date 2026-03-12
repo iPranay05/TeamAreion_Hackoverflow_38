@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { 
-  Shield, MapPin, Check, X, Trash2, AlertTriangle, 
+  Shield, MapPin, Trash2, AlertTriangle, 
   Clock, User, Phone, Mail, LayoutDashboard, 
-  Bell, FileText, Users, ShieldCheck, Map as MapIcon, 
+  Bell, FileText, Users, ShieldCheck, 
   BarChart3, Settings as SettingsIcon, LogOut 
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -87,7 +87,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [newZone, setNewZone] = useState({ name: '', lat: 0, lng: 0, radius: 500 });
 
-  const MAP_KEY = 'AIzaSyAhAptinnXC0XjwSoSx2AmiR-KGJ2VYfYM';
+  const MAP_KEY = (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY || '';
 
   useEffect(() => {
     fetchData();
@@ -251,30 +251,92 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="heatmap-container" style={{ position: 'relative' }}>
-                  <GoogleMapReact
-                    bootstrapURLKeys={{ key: MAP_KEY }}
-                    defaultCenter={{ lat: 19.0760, lng: 72.8777 }}
-                    defaultZoom={11}
-                    options={{ styles: [
-                      { "elementType": "geometry", "stylers": [{ "color": "#212121" }] },
-                      { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
-                      { "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
-                      { "elementType": "labels.text.stroke", "stylers": [{ "color": "#212121" }] },
-                      { "featureType": "administrative", "elementType": "geometry", "stylers": [{ "color": "#757575" }] },
-                      { "featureType": "road", "elementType": "geometry.fill", "stylers": [{ "color": "#2c2c2c" }] }
-                    ] }}
-                  >
-                    {complaints.filter(c => c.status === 'approved').map(c => (
-                      <MapMarker key={c.id} lat={c.latitude} lng={c.longitude} type="incident" />
-                    ))}
-                    {alerts.filter(a => a.status === 'active').map(a => (
-                      <MapMarker key={a.id} lat={a.latitude} lng={a.longitude} type="alert" text={a.user_name} />
-                    ))}
-                    {safeZones.map(s => (
-                      <MapMarker key={s.id} lat={s.latitude} lng={s.longitude} type="safe" text={s.name} />
-                    ))}
-                  </GoogleMapReact>
+                <div className="heatmap-container" style={{ position: 'relative', height: '400px', backgroundColor: '#1a1a1a', borderRadius: '8px', overflow: 'hidden' }}>
+                  {MAP_KEY ? (
+                    <GoogleMapReact
+                      bootstrapURLKeys={{ key: MAP_KEY }}
+                      defaultCenter={{ lat: 19.0760, lng: 72.8777 }}
+                      defaultZoom={11}
+                      options={{ styles: [
+                        { "elementType": "geometry", "stylers": [{ "color": "#212121" }] },
+                        { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
+                        { "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
+                        { "elementType": "labels.text.stroke", "stylers": [{ "color": "#212121" }] },
+                        { "featureType": "administrative", "elementType": "geometry", "stylers": [{ "color": "#757575" }] },
+                        { "featureType": "road", "elementType": "geometry.fill", "stylers": [{ "color": "#2c2c2c" }] }
+                      ] }}
+                    >
+                      {complaints.filter(c => c.status === 'approved').map(c => (
+                        <MapMarker key={c.id} lat={c.latitude} lng={c.longitude} type="incident" />
+                      ))}
+                      {alerts.filter(a => a.status === 'active').map(a => (
+                        <MapMarker key={a.id} lat={a.latitude} lng={a.longitude} type="alert" text={a.user_name} />
+                      ))}
+                      {safeZones.map(s => (
+                        <MapMarker key={s.id} lat={s.latitude} lng={s.longitude} type="safe" text={s.name} />
+                      ))}
+                    </GoogleMapReact>
+                  ) : (
+                    <div style={{ 
+                      height: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexDirection: 'column',
+                      gap: '1rem',
+                      padding: '2rem'
+                    }}>
+                      <MapPin size={48} color="#ec4899" />
+                      <h3 style={{ color: '#fff', fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>
+                        Map Visualization Unavailable
+                      </h3>
+                      <p style={{ color: '#9ca3af', textAlign: 'center', margin: 0 }}>
+                        Google Maps API key is missing or invalid
+                      </p>
+                      <div style={{ 
+                        backgroundColor: 'rgba(236, 72, 153, 0.1)', 
+                        border: '1px solid rgba(236, 72, 153, 0.3)',
+                        borderRadius: '8px',
+                        padding: '1rem',
+                        marginTop: '1rem',
+                        maxWidth: '500px'
+                      }}>
+                        <p style={{ color: '#d1d5db', fontSize: '0.875rem', margin: '0 0 0.5rem 0' }}>
+                          <strong>To enable maps:</strong>
+                        </p>
+                        <ol style={{ color: '#9ca3af', fontSize: '0.875rem', margin: 0, paddingLeft: '1.5rem' }}>
+                          <li>Go to Google Cloud Console</li>
+                          <li>Enable Maps JavaScript API</li>
+                          <li>Enable billing (free $200 credit)</li>
+                          <li>Copy API key to .env file</li>
+                          <li>Restart dashboard</li>
+                        </ol>
+                        <p style={{ color: '#6b7280', fontSize: '0.75rem', marginTop: '0.75rem', marginBottom: 0 }}>
+                          See <code style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>GOOGLE_MAPS_FIX.md</code> for detailed instructions
+                        </p>
+                      </div>
+                      <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ec4899' }}>
+                            {complaints.filter(c => c.status === 'approved').length}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Incidents</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#ec4899' }}>
+                            {alerts.filter(a => a.status === 'active').length}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Active Alerts</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: '#10b981' }}>
+                            {safeZones.length}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Safe Zones</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -406,9 +468,91 @@ export default function App() {
             )}
 
             {activeTab === 'analytics' && (
-              <div style={{ textAlign: 'center', padding: '5rem', color: 'var(--text-secondary)' }}>
-                <BarChart3 size={48} style={{ marginBottom: '1rem' }} />
-                <p>Advanced module coming in next update: Full Analytics & Detailed Demographic Data.</p>
+              <div>
+                <div className="stats-grid" style={{ marginBottom: '2rem' }}>
+                  <div className="stat-card">
+                    <span className="stat-label">Total Incidents Reported</span>
+                    <span className="stat-value">{complaints.length}</span>
+                    <span className="stat-change">
+                      {complaints.filter(c => c.status === 'approved').length} approved, {complaints.filter(c => c.status === 'pending').length} pending
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-label">Emergency Alerts</span>
+                    <span className="stat-value" style={{ color: 'var(--accent)' }}>{alerts.length}</span>
+                    <span className="stat-change">
+                      {alerts.filter(a => a.status === 'active').length} active, {alerts.filter(a => a.status === 'resolved').length} resolved
+                    </span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-label">Registered Users</span>
+                    <span className="stat-value" style={{ color: 'var(--safe)' }}>{profiles.length}</span>
+                    <span className="stat-change up">Growing community</span>
+                  </div>
+                  <div className="stat-card">
+                    <span className="stat-label">Safe Zones</span>
+                    <span className="stat-value" style={{ color: 'var(--warning)' }}>{safeZones.length}</span>
+                    <span className="stat-change">Across major cities</span>
+                  </div>
+                </div>
+
+                <div className="stat-card" style={{ marginBottom: '2rem' }}>
+                  <h3 style={{ marginBottom: '1.5rem', fontSize: '1.2rem' }}>Incident Categories Breakdown</h3>
+                  <div style={{ display: 'grid', gap: '1rem' }}>
+                    {['Street Harassment', 'Poor Lighting', 'Suspicious Activity', 'Stalking', 'Workplace Harassment', 'Unsafe Public Transport', 'Safe Space', 'Emergency Help'].map(category => {
+                      const count = complaints.filter(c => c.category === category).length;
+                      const percentage = complaints.length > 0 ? (count / complaints.length * 100).toFixed(1) : 0;
+                      return (
+                        <div key={category} style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                          <div style={{ minWidth: '180px', fontSize: '0.9rem', fontWeight: 600 }}>{category}</div>
+                          <div style={{ flex: 1, height: '24px', backgroundColor: 'var(--border)', borderRadius: '12px', overflow: 'hidden', position: 'relative' }}>
+                            <div style={{ 
+                              width: `${percentage}%`, 
+                              height: '100%', 
+                              backgroundColor: category.includes('Safe') || category.includes('Help') ? 'var(--safe)' : 'var(--accent)',
+                              transition: 'width 0.3s ease'
+                            }} />
+                          </div>
+                          <div style={{ minWidth: '80px', textAlign: 'right', fontSize: '0.9rem', fontWeight: 700 }}>
+                            {count} ({percentage}%)
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Recent Activity</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Last 24 hours</span>
+                        <span style={{ fontWeight: 700 }}>{complaints.filter(c => new Date(c.created_at) > new Date(Date.now() - 86400000)).length} incidents</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Last 7 days</span>
+                        <span style={{ fontWeight: 700 }}>{complaints.filter(c => new Date(c.created_at) > new Date(Date.now() - 604800000)).length} incidents</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>Last 30 days</span>
+                        <span style={{ fontWeight: 700 }}>{complaints.filter(c => new Date(c.created_at) > new Date(Date.now() - 2592000000)).length} incidents</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="stat-card">
+                    <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Top Locations</h3>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {complaints.slice(0, 5).map((c, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                          <MapPin size={12} color="var(--accent)" />
+                          <span style={{ flex: 1, color: 'var(--text-secondary)' }}>{c.location_addr?.split(',')[0] || 'Unknown'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </>

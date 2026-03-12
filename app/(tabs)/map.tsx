@@ -33,14 +33,14 @@ export default function MapScreen() {
   const [unsafeSpots, setUnsafeSpots] = useState<any[]>([]);
   const [searchText, setSearchText] = useState('');
   const [searching, setSearching] = useState(false);
-  const [routeData, setRouteData] = useState<{ distance: string, time: string } | null>(null);
+  const [routeData, setRouteData] = useState<{ distance: string, time: string, walkTime?: string } | null>(null);
   const [polylineCoords, setPolylineCoords] = useState<{ latitude: number, longitude: number }[]>([]);
   const [transportMode, setTransportMode] = useState<'walking' | 'driving'>('walking');
   const [cabModalVisible, setCabModalVisible] = useState(false);
 
   const fetchRoute = async (start: { latitude: number, longitude: number }, end: { latitude: number, longitude: number }, mode: 'walking' | 'driving') => {
     try {
-      const osrmProfile = mode === 'walking' ? 'walking' : 'driving';
+      const osrmProfile = mode === 'walking' ? 'foot' : 'car';
       const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson`;
       const response = await fetch(url);
       const json = await response.json();
@@ -54,55 +54,67 @@ export default function MapScreen() {
         
         setPolylineCoords(coordinates);
         
-        let distanceStr = "";
         const distMeters = route.distance;
+        let distanceStr = "";
         if (distMeters < 1000) {
           distanceStr = `${Math.round(distMeters)} m`;
         } else {
-          distanceStr = `${(distMeters / 1000).toFixed(2)} km`;
+          distanceStr = `${(distMeters / 1000).toFixed(1)} km`;
         }
 
-        // Base duration from OSRM (seconds)
+        // Use OSRM duration as base (it's already realistic)
         let timeSecs = route.duration;
+        let finalMins = Math.round(timeSecs / 60);
+        
+        // For Indian city conditions, add realistic buffers
+        if (mode === 'walking') {
+          // Walking: Add 15% for signals and crowds
+          finalMins = Math.round(finalMins * 1.15);
+        } else {
+          // Driving: Add 30% for Indian traffic conditions
+          finalMins = Math.round(finalMins * 1.3);
+        }
 
-        // Apply Real-World City Buffers
-        // Walking: 1.2x (signals, crowds)
-        // Driving: 1.5x (India traffic/Mumbra-Thane density)
-        const buffer = mode === 'walking' ? 1.2 : 1.5;
-        let finalMins = Math.round((timeSecs / 60) * buffer);
-
-        // --- GLOBAL LOGIC GUARD ---
-        // If it's a car, it MUST be faster than walking for anything over 200m
-        // Average Walk: 5km/h, Average Car: 20km/h (3-4x faster)
-        if (mode === 'driving' && distMeters > 200) {
-          const estimatedWalkMins = Math.round((distMeters / 1.3) / 60);
-          if (finalMins >= estimatedWalkMins) {
-            finalMins = Math.max(1, Math.round(estimatedWalkMins / 3.5));
-          }
+        // Calculate walking time for comparison when driving
+        let walkTime = undefined;
+        if (mode === 'driving') {
+          const walkSecs = distMeters / 1.4; // 1.4 m/s = 5 km/h
+          const walkMins = Math.round((walkSecs / 60) * 1.15);
+          walkTime = `${walkMins} min walk`;
         }
 
         setRouteData({
           distance: distanceStr,
-          time: `${finalMins} min`
+          time: `${finalMins} min`,
+          walkTime
         });
       } else {
         throw new Error("No routes found");
       }
     } catch (error) {
-      console.warn("Routing API error or no route, using fallback:", error);
+      console.warn("Routing API error, using fallback calculation:", error);
       setPolylineCoords([start, end]);
       const distMeters = getDistance(start.latitude, start.longitude, end.latitude, end.longitude);
       
       let finalMins = 0;
+      let walkTime = undefined;
+      
       if (mode === 'walking') {
-        finalMins = Math.round((distMeters / 1.1) / 60); // 1.1 m/s slow walk
+        // Walking: 5 km/h = 1.4 m/s with 15% buffer
+        finalMins = Math.round((distMeters / 1.4 / 60) * 1.15);
       } else {
-        finalMins = Math.max(1, Math.round((distMeters / 6.0) / 60)); // 6 m/s (21km/h) city drive
+        // Driving: 25 km/h = 6.9 m/s with 30% buffer for city traffic
+        finalMins = Math.round((distMeters / 6.9 / 60) * 1.3);
+        
+        // Calculate walking time
+        const walkMins = Math.round((distMeters / 1.4 / 60) * 1.15);
+        walkTime = `${walkMins} min walk`;
       }
 
       setRouteData({
-        distance: distMeters < 1000 ? `${Math.round(distMeters)} m` : `${(distMeters / 1000).toFixed(2)} km`,
-        time: `${finalMins} min`
+        distance: distMeters < 1000 ? `${Math.round(distMeters)} m` : `${(distMeters / 1000).toFixed(1)} km`,
+        time: `${finalMins} min`,
+        walkTime
       });
     }
   };
@@ -150,10 +162,23 @@ export default function MapScreen() {
       const results = await Location.geocodeAsync(searchText);
       if (results && results.length > 0) {
         const { latitude, longitude } = results[0];
-        const newDest = { latitude, longitude, name: searchText };
+        
+        // Get detailed address for the searched location
+        const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
+        let formattedAddress = searchText;
+        
+        if (address) {
+          const parts = [];
+          if (address.name && address.name !== address.street) parts.push(address.name);
+          if (address.street) parts.push(address.street);
+          if (address.district || address.subregion) parts.push(address.district || address.subregion);
+          if (address.city) parts.push(address.city);
+          if (address.region && address.region !== address.city) parts.push(address.region);
+          formattedAddress = parts.filter(p => p).join(', ') || searchText;
+        }
+        
+        const newDest = { latitude, longitude, name: formattedAddress };
         setSelectedDestination(newDest);
-        // Zoom to destination
-        // Note: MapView ref would be needed for animateToRegion, but initialRegion works for now if we didn't have one
       } else {
         Alert.alert("Not Found", "Could not find that location. Please try another search.");
       }
@@ -164,9 +189,31 @@ export default function MapScreen() {
     }
   };
 
-  const handleMapLongPress = (e: any) => {
+  const handleMapLongPress = async (e: any) => {
     const coords = e.nativeEvent.coordinate;
-    setSelectedDestination(coords);
+    try {
+      // Reverse geocode to get address
+      const [address] = await Location.reverseGeocodeAsync({
+        latitude: coords.latitude,
+        longitude: coords.longitude
+      });
+      
+      let formattedAddress = 'Selected Location';
+      
+      if (address) {
+        const parts = [];
+        if (address.name && address.name !== address.street) parts.push(address.name);
+        if (address.street) parts.push(address.street);
+        if (address.district || address.subregion) parts.push(address.district || address.subregion);
+        if (address.city) parts.push(address.city);
+        if (address.region && address.region !== address.city) parts.push(address.region);
+        formattedAddress = parts.filter(p => p).join(', ') || 'Selected Location';
+      }
+      
+      setSelectedDestination({ ...coords, name: formattedAddress });
+    } catch (error) {
+      setSelectedDestination({ ...coords, name: 'Selected Location' });
+    }
     setSearchText('');
   };
 
@@ -323,15 +370,25 @@ export default function MapScreen() {
                   </View>
                 </Marker>
               ))}
-              {/* Heatmap remains the same */}
+              {/* Heatmap with smooth color blending */}
               <Heatmap
                 points={MOCK_INCIDENT_DATA}
-                radius={40}
-                opacity={0.7}
+                radius={50}
+                opacity={0.6}
                 gradient={{
-                  colors: ['#00ff00', '#ff0000', '#ff0000'],
-                  startPoints: [0.01, 0.5, 1],
-                  colorMapSize: 256,
+                  colors: [
+                    'rgba(0, 255, 0, 0)',      // Transparent green (safe)
+                    'rgba(0, 255, 0, 0.4)',    // Light green
+                    'rgba(100, 255, 0, 0.5)',  // Yellow-green
+                    'rgba(255, 255, 0, 0.6)',  // Yellow
+                    'rgba(255, 200, 0, 0.7)',  // Orange-yellow
+                    'rgba(255, 150, 0, 0.8)',  // Orange
+                    'rgba(255, 100, 0, 0.85)', // Red-orange
+                    'rgba(255, 50, 0, 0.9)',   // Light red
+                    'rgba(255, 0, 0, 0.95)',   // Red (danger)
+                  ],
+                  startPoints: [0, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1],
+                  colorMapSize: 512,
                 }}
               />
             </MapView>
@@ -347,15 +404,37 @@ export default function MapScreen() {
       {selectedDestination ? (
         <View style={s.destinationOverlay}>
           <View style={s.destTextContainer}>
-            <View style={s.destInfoMain}>
-              <Ionicons name="navigate" size={24} color={Colors.sos} />
-              <View>
-                <Text style={s.destText}>{selectedDestination.name || "Selected Destination"}</Text>
-                {routeData && (
-                  <Text style={s.routeInfoText}>{routeData.time} • {routeData.distance}</Text>
+            <View style={s.destHeader}>
+              <Ionicons name="location" size={20} color={Colors.sos} />
+              <Text style={s.destLabel}>Destination</Text>
+            </View>
+            <Text style={s.destAddress} numberOfLines={2}>
+              {selectedDestination.name || "Selected Location"}
+            </Text>
+            {routeData && (
+              <View style={s.routeInfoContainer}>
+                <View style={s.routeInfoRow}>
+                  <View style={s.routeInfoItem}>
+                    <Ionicons 
+                      name={transportMode === 'walking' ? 'walk' : 'car'} 
+                      size={18} 
+                      color={Colors.sos} 
+                    />
+                    <Text style={s.routeTimeText}>{routeData.time}</Text>
+                  </View>
+                  <View style={s.routeDivider} />
+                  <View style={s.routeInfoItem}>
+                    <Ionicons name="navigate" size={18} color={Colors.accent} />
+                    <Text style={s.routeDistanceText}>{routeData.distance}</Text>
+                  </View>
+                </View>
+                {transportMode === 'driving' && routeData.walkTime && (
+                  <Text style={s.altTimeText}>
+                    🚶 {routeData.walkTime} on foot
+                  </Text>
                 )}
               </View>
-            </View>
+            )}
           </View>
           {rideState.isTripActive ? (
             <View style={{ gap: Spacing.sm }}>
@@ -461,11 +540,18 @@ const s = StyleSheet.create({
   modeBtnText: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: '600' },
   modeBtnTextActive: { color: Colors.white, fontWeight: '700' },
 
-  destinationOverlay: { position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: Colors.surface, padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+  destinationOverlay: { position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: Colors.surface, padding: Spacing.lg, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
   destTextContainer: { marginBottom: Spacing.md },
-  destInfoMain: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  destText: { color: Colors.text, fontSize: FontSize.md, fontWeight: '700', flex: 1 },
-  routeInfoText: { color: Colors.sos, fontSize: FontSize.sm, fontWeight: '600', marginTop: 2 },
+  destHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: Spacing.xs },
+  destLabel: { color: Colors.textMuted, fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
+  destAddress: { color: Colors.text, fontSize: FontSize.md, fontWeight: '700', lineHeight: 20, marginBottom: Spacing.sm },
+  routeInfoContainer: { backgroundColor: Colors.background, padding: Spacing.sm, borderRadius: Radius.sm, marginTop: Spacing.xs },
+  routeInfoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around' },
+  routeInfoItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  routeTimeText: { color: Colors.sos, fontSize: FontSize.lg, fontWeight: '800' },
+  routeDistanceText: { color: Colors.accent, fontSize: FontSize.lg, fontWeight: '800' },
+  routeDivider: { width: 1, height: 20, backgroundColor: Colors.border },
+  altTimeText: { color: Colors.textMuted, fontSize: FontSize.xs, textAlign: 'center', marginTop: Spacing.xs },
   startJourneyBtn: { backgroundColor: Colors.sos, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.md, borderRadius: Radius.md, gap: Spacing.sm },
   startJourneyText: { color: Colors.white, fontSize: FontSize.md, fontWeight: '800' },
   clearDest: { marginTop: Spacing.sm, alignItems: 'center', padding: Spacing.xs },

@@ -12,7 +12,18 @@ export function useShakeDetector(onShake: () => void, enabled: boolean) {
   const lastShakeTime = useRef(0);
 
   useEffect(() => {
+    console.log('Shake detector enabled:', enabled);
+    
     if (!enabled) return;
+
+    // Check if accelerometer is available
+    Accelerometer.isAvailableAsync().then(available => {
+      console.log('Accelerometer available:', available);
+      if (!available) {
+        console.warn('Accelerometer not available on this device');
+        return;
+      }
+    });
     
     // Low update interval is critical for detection
     Accelerometer.setUpdateInterval(50);
@@ -21,7 +32,14 @@ export function useShakeDetector(onShake: () => void, enabled: boolean) {
       const mag = Math.sqrt(x*x + y*y + z*z);
       const now = Date.now();
 
+      // Debug: Log high magnitude readings
+      if (mag > 1.5) {
+        console.log('Accelerometer reading:', mag.toFixed(2));
+      }
+
       if (mag > SHAKE_THRESHOLD) {
+        console.log('Shake detected! Magnitude:', mag.toFixed(2), 'Count:', shakeCount.current + 1);
+        
         if (now - lastShakeTime.current < DEBOUNCE_MS) return;
 
         Vibration.vibrate(100); // Feedback for detection
@@ -36,6 +54,7 @@ export function useShakeDetector(onShake: () => void, enabled: boolean) {
         lastShakeTime.current = now;
 
         if (shakeCount.current >= 3) {
+          console.log('SOS TRIGGERED by shake!');
           Vibration.vibrate([0, 500, 200, 500]); // Major vibration for trigger
           shakeCount.current = 0;
           onShake();

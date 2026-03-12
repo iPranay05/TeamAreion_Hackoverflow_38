@@ -35,7 +35,8 @@ export default function AuthScreen() {
             data: {
               full_name: fullName,
               phone: phone
-            }
+            },
+            emailRedirectTo: undefined // Skip email confirmation in development
           }
         });
 
@@ -52,7 +53,9 @@ export default function AuthScreen() {
           if (profileError) console.error('Profile creation error:', profileError);
         }
 
-        Alert.alert('Success', 'Account created! Please check your email for verification.');
+        Alert.alert('Success', 'Account created! You can now login.', [
+          { text: 'OK', onPress: () => setIsSignUp(false) }
+        ]);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
