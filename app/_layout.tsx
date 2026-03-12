@@ -90,25 +90,143 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
     return () => clearInterval(interval);
   }, [rideState.escalationTimer, rideState.emergencyPhase]);
 
+  const recordingRef = React.useRef<Audio.Recording | null>(null);
+
+  const startRecording = async () => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        console.warn('[SOS] Microphone permission not granted');
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      console.log('[SOS] Starting recording...');
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      recordingRef.current = recording;
+      console.log('[SOS] Recording started');
+    } catch (err) {
+      console.error('[SOS] Failed to start recording', err);
+    }
+  };
+
+  const stopAndUploadRecording = async (alertId: string) => {
+    if (!recordingRef.current) {
+      console.warn('[SOS] No recording found to stop');
+      return;
+    }
+
+    try {
+      console.log('[SOS] Stopping recording...');
+      const currentRecording = recordingRef.current;
+      recordingRef.current = null; // Clear immediately to prevent multiple calls
+      
+      await currentRecording.stopAndUnloadAsync();
+      const uri = currentRecording.getURI();
+
+      if (uri) {
+        console.log('[SOS] Uploading audio:', uri);
+        const fileName = `sos_${alertId}_${Date.now()}.m4a`;
+        
+        // Use FormData for robust React Native uploads
+        const formData = new FormData();
+        formData.append('file', {
+          uri: uri,
+          name: fileName,
+          type: 'audio/m4a'
+        } as any);
+
+        const { error: uploadError } = await supabase.storage
+          .from('sos_recordings')
+          .upload(fileName, formData);
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('sos_recordings')
+          .getPublicUrl(fileName);
+
+        await supabase.from('emergency_alerts').update({ audio_url: publicUrl }).eq('id', alertId);
+        console.log('[SOS] Audio uploaded successfully:', publicUrl);
+
+        // Send follow-up SMS with audio link
+        const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
+        const parsedContacts = savedContacts ? JSON.parse(savedContacts) : [];
+        const contacts = Array.isArray(parsedContacts) ? parsedContacts.filter((c: any) => c && c.phone) : [];
+        
+        if (contacts.length > 0) {
+          const phones = contacts.map((c: any) => c.phone.trim());
+          const message = `🚨 Audio evidence recorded for ${settings.userName || 'User'}. Listen here: ${publicUrl}`;
+          
+          await sendTwilioSMS(
+            phones,
+            message,
+            settings.twilioSid,
+            settings.twilioToken,
+            settings.twilioNumber
+          );
+          console.log('[SOS] Follow-up Audio SMS sent to', phones.length, 'contacts');
+        }
+      }
+    } catch (err) {
+      console.error('[SOS] Audio upload failed', err);
+    }
+  };
+
   const handleEscalateToFamily = async () => {
     setEscalationTimer(null);
     setEmergencyPhase('ESCALATING_FAMILY');
     
     try {
+      // Start recording immediately
+      startRecording();
+
       const loc = await Location.getCurrentPositionAsync({});
       
+      // Fetch emergency contacts snapshot
+      const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
+      const contactsSnapshot = savedContacts ? JSON.parse(savedContacts) : [];
+
       // Log alert to Supabase for Admin Dashboard
       const { data: { user } } = await supabase.auth.getUser();
+      // Fresh fetch to ensure we have the very latest name/phone
       const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
       
-      await supabase.from('emergency_alerts').insert([{
+      const userName = profile?.full_name || settings.userName || user?.email;
+      const userPhone = profile?.phone_number || user?.phone || user?.user_metadata?.phone || '';
+
+      const { data: alertData, error: dbError } = await supabase.from('emergency_alerts').insert([{
         user_id: user?.id,
-        user_name: profile?.full_name || user?.email,
-        user_phone: profile?.phone_number,
+        user_name: userName,
+        user_phone: userPhone,
         latitude: loc.coords.latitude,
         longitude: loc.coords.longitude,
-        status: 'active'
-      }]);
+        status: 'active',
+        emergency_contacts: contactsSnapshot,
+        police_status: 'none'
+      }]).select().single();
+
+      if (dbError) {
+        console.warn("Offline/DB Error: Falling back to native SMS...");
+        const message = `🚨 EMERGENCY: ${userName}'s ride deviated! 📍 https://www.google.com/maps?q=${loc.coords.latitude}%2C${loc.coords.longitude}`;
+        const phones = contactsSnapshot.map((c: any) => c.phone);
+        if (phones.length > 0) {
+          import('expo-sms').then(({ sendSMSAsync }) => {
+            sendSMSAsync(phones, message);
+          });
+        }
+      }
+
+      // Stop and upload recording after 30 seconds (User requested)
+      if (alertData) {
+        setTimeout(() => stopAndUploadRecording(alertData.id), 30000);
+      }
 
       await escalateToFamily(rideState.cabInfo, loc.coords, settings);
     } catch (err) {
@@ -163,15 +281,37 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
       
+      const userName = profile?.full_name || settings.userName || user?.email;
+      const userPhone = profile?.phone_number || user?.phone || user?.user_metadata?.phone || '';
+
       if (locData) {
-        await supabase.from('emergency_alerts').insert([{
+        const { data: alertData, error: dbError } = await supabase.from('emergency_alerts').insert([{
           user_id: user?.id,
-          user_name: profile?.full_name || user?.email,
-          user_phone: profile?.phone_number,
+          user_name: userName,
+          user_phone: userPhone,
           latitude: locData.coords.latitude,
           longitude: locData.coords.longitude,
-          status: 'active'
-        }]);
+          status: 'active',
+          emergency_contacts: contacts,
+          police_status: 'none'
+        }]).select().single();
+
+        if (dbError) {
+          console.warn("Offline/DB Error: Falling back to native SMS...");
+          const smsMessage = `🚨 SOS HELP! My live location: ${locationLink}`;
+          const phones = contacts.map((c: any) => c.phone);
+          if (phones.length > 0) {
+            import('expo-sms').then(({ sendSMSAsync }) => {
+              sendSMSAsync(phones, smsMessage);
+            });
+          }
+        }
+
+        // Start background recording for manual SOS too
+        startRecording();
+        if (alertData) {
+          setTimeout(() => stopAndUploadRecording(alertData.id), 10000);
+        }
       }
 
       if (!Array.isArray(contacts) || contacts.length === 0) {
@@ -184,7 +324,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       for (const contact of contacts) {
         if (contact && contact.phone) {
           await sendTwilioSMS(
-            contact.phone,
+            contact.phone.trim(),
             message,
             settings.twilioSid,
             settings.twilioToken,

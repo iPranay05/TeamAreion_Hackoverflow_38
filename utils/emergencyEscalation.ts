@@ -29,29 +29,50 @@ export async function triggerLoudAlarm() {
  * Escalates to family via Twilio calls (Primary) and SMS (All).
  */
 export async function escalateToFamily(cabInfo: any, location: any, settings: any) {
+  console.log("[Escalation] Starting escalation to family...");
   const contactsStr = await AsyncStorage.getItem(CONTACTS_KEY);
-  if (!contactsStr) return;
+  if (!contactsStr) {
+    console.warn("[Escalation] No contacts found in AsyncStorage");
+    return;
+  }
   
-  const contacts = JSON.parse(contactsStr);
-  if (contacts.length === 0) return;
+  const allContacts = JSON.parse(contactsStr);
+  const contacts = Array.isArray(allContacts) ? allContacts.filter((c: any) => c && c.phone) : [];
+  
+  if (contacts.length === 0) {
+    console.warn("[Escalation] No valid emergency contacts found");
+    return;
+  }
 
-  const phones = contacts.map((c: any) => c.phone);
-  const primaryPhone = contacts[0].phone;
+  const phones = contacts.map((c: any) => c.phone.trim());
+  const primaryPhone = phones[0];
   
   const locLink = `https://www.google.com/maps?q=${location.latitude}%2C${location.longitude}`;
-  const message = `🚨 EMERGENCY: ${settings.userName || 'User'}'s cab has deviated from its route! 
-🚕 Cab Plate: ${cabInfo?.plateNumber || 'Unknown'}
-👤 Driver: ${cabInfo?.driverName || 'Unknown'}
-📍 Last Location: ${locLink}`;
+  const message = `🚨 SOS: ${settings.userName || 'User'}'s ride deviated!
+🚕 ${cabInfo?.plateNumber || 'Cab'}
+👤 ${cabInfo?.driverName || 'Driver'}
+📍 ${locLink}`;
 
+  console.log(`[Escalation] Sending SMS to ${phones.length} contacts...`);
+  
   // 1. Send SMS to ALL contacts
-  await sendTwilioSMS(phones, message, settings.twilioSid, settings.twilioToken, settings.twilioNumber);
+  try {
+    await sendTwilioSMS(phones, message, settings.twilioSid, settings.twilioToken, settings.twilioNumber);
+  } catch (smsErr) {
+    console.error("[Escalation] SMS step failed, but continuing to call:", smsErr);
+  }
 
   // 2. Make Automated Call ONLY to the Primary Contact
+  console.log(`[Escalation] Triggering call to primary: ${primaryPhone}`);
   const twiml = `<Response>
-    <Say voice="alice" loop="2">Are you Safe? This is a safety alert for ${settings.userName || 'User'}. Their cab has deviated from its route. We have sent their live location and cab details to your phone via SMS. Please check on them immediately.</Say>
+    <Say voice="alice" loop="2">Safety Alert for ${settings.userName || 'User'}. Their cab has deviated from its route. Please check on them immediately. Are they safe? We have sent an SMS with their live location.</Say>
   </Response>`;
-  await makeTwilioCall([primaryPhone], twiml, settings.twilioSid, settings.twilioToken, settings.twilioNumber);
+  
+  try {
+    await makeTwilioCall([primaryPhone], twiml, settings.twilioSid, settings.twilioToken, settings.twilioNumber);
+  } catch (callErr) {
+    console.error("[Escalation] Call step failed:", callErr);
+  }
 }
 
 /**

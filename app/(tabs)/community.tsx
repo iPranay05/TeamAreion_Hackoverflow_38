@@ -19,6 +19,8 @@ interface Post {
   created_at: string;
   reactions: number;
   comments: number;
+  status: 'pending' | 'approved' | 'rejected';
+  is_own?: boolean;
 }
 
 const CATEGORIES = ['Harassment', 'Unsafe Area', 'Driver Behavior', 'Street Lighting', 'Positive Story', 'Other'];
@@ -44,23 +46,18 @@ export default function CommunityScreen() {
   const loadPosts = async () => {
     setLoading(true);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // Fetch: (approved posts) OR (my own posts)
       const { data, error } = await supabase
         .from('complaints')
         .select('*')
-        .eq('status', 'approved')
+        .or(`status.eq.approved,user_id.eq.${user?.id}`)
         .order('created_at', { ascending: false })
         .limit(50);
 
       if (error) {
         console.error('Error loading posts:', error);
-        // If error is about missing columns, show helpful message
-        if (error.message.includes('column')) {
-          Alert.alert(
-            'Database Setup Required',
-            'Please run the database migration first. Check DATABASE_SETUP_GUIDE.md in your project folder.',
-            [{ text: 'OK' }]
-          );
-        }
       }
 
       if (data) {
@@ -76,7 +73,9 @@ export default function CommunityScreen() {
           user_email: d.user_email,
           created_at: d.created_at,
           reactions: d.reactions || 0,
-          comments: d.comments || 0
+          comments: d.comments || 0,
+          status: d.status, // Preserve status for badge
+          is_own: d.user_id === user?.id
         })));
       }
     } catch (e) {
@@ -139,13 +138,44 @@ export default function CommunityScreen() {
         .eq('id', user?.id)
         .single();
 
+      let uploadedUrl = null;
+      if (mediaUri) {
+        console.log('[Community] Uploading media:', mediaUri);
+        const fileName = `${user?.id}/${Date.now()}.jpg`;
+        
+        // Use FormData for robust React Native uploads
+        const formData = new FormData();
+        formData.append('file', {
+          uri: mediaUri,
+          name: fileName,
+          type: 'image/jpeg'
+        } as any);
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('complaints')
+          .upload(fileName, formData);
+
+        if (uploadError) {
+          console.error('[Community] Upload error:', uploadError);
+          throw new Error('Failed to upload image');
+        }
+
+        // Get public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('complaints')
+          .getPublicUrl(fileName);
+        
+        uploadedUrl = publicUrl;
+        console.log('[Community] Uploaded success:', uploadedUrl);
+      }
+
       const { error } = await supabase.from('complaints').insert([{
         category,
         description,
         location_addr: location || 'Not specified',
         latitude: coords?.lat,
         longitude: coords?.lng,
-        media_url: mediaUri,
+        media_url: uploadedUrl,
         status: 'pending',
         user_id: user?.id,
         user_email: user?.email,
@@ -314,7 +344,14 @@ export default function CommunityScreen() {
                   <Ionicons name="person" size={20} color={Colors.textMuted} />
                 </View>
                 <View style={s.postMeta}>
-                  <Text style={s.userName}>{post.user_name}</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={s.userName}>{post.user_name}</Text>
+                    {post.status !== 'approved' && (
+                      <View style={[s.statusBadge, post.status === 'pending' ? s.pendingBadge : s.rejectedBadge]}>
+                        <Text style={s.statusBadgeText}>{post.status.toUpperCase()}</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={s.postTime}>
                     {new Date(post.created_at).toLocaleDateString()} • {post.category}
                   </Text>
@@ -432,6 +469,26 @@ const s = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: FontSize.xs,
     marginTop: 2
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  pendingBadge: {
+    backgroundColor: Colors.accent + '20',
+    borderWidth: 1,
+    borderColor: Colors.accent,
+  },
+  rejectedBadge: {
+    backgroundColor: Colors.sos + '20',
+    borderWidth: 1,
+    borderColor: Colors.sos,
+  },
+  statusBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: Colors.text,
   },
   postDescription: {
     color: Colors.text,

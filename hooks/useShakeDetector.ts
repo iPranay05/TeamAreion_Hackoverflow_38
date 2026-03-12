@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react';
 import { Accelerometer } from 'expo-sensors';
 import { Vibration } from 'react-native';
 
-const SHAKE_THRESHOLD = 2.4; // Slightly lower for easier triggering
-const PATTERN_WINDOW_MS = 2500;
-const DEBOUNCE_MS = 500;
+const SHAKE_THRESHOLD = 1.35; // Very sensitive
+const PATTERN_WINDOW_MS = 3000;
+const DEBOUNCE_MS = 300;
 
 export function useShakeDetector(onShake: () => void, enabled: boolean) {
   const shakeCount = useRef(0);
@@ -33,7 +33,7 @@ export function useShakeDetector(onShake: () => void, enabled: boolean) {
       const now = Date.now();
 
       // Debug: Log high magnitude readings
-      if (mag > 1.5) {
+      if (mag > 1.2) {
         console.log('Accelerometer reading:', mag.toFixed(2));
       }
 
@@ -53,7 +53,7 @@ export function useShakeDetector(onShake: () => void, enabled: boolean) {
 
         lastShakeTime.current = now;
 
-        if (shakeCount.current >= 3) {
+        if (shakeCount.current >= 2) {
           console.log('SOS TRIGGERED by shake!');
           Vibration.vibrate([0, 500, 200, 500]); // Major vibration for trigger
           shakeCount.current = 0;

@@ -14,6 +14,7 @@ export default function SettingsScreen() {
   const { location, loading: locationLoading, getMapLink } = useLocation();
   const { contacts } = useContacts();
   const [userName, setUserName] = useState(settings.userName);
+  const [username, setUsername] = useState(settings.username);
   const [sosMessage, setSosMessage] = useState(settings.sosMessage);
   const [fakeCaller, setFakeCaller] = useState(settings.fakeCaller);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -30,7 +31,14 @@ export default function SettingsScreen() {
         const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single();
         if (data) {
           setUserProfile(data);
+          const dbUsername = data.username || user.email?.split('@')[0] || settings.username;
+          setUsername(dbUsername);
           setUserName(data.full_name || settings.userName);
+          
+          // Sync to settings if different
+          if (dbUsername !== settings.username) {
+            updateSettings({ username: dbUsername });
+          }
         }
       }
     } catch (e) {
@@ -107,12 +115,36 @@ export default function SettingsScreen() {
                 </View>
               </View>
               <View style={s.crd}>
-                <Text style={s.cL}>Your Name</Text>
+                <Text style={s.cL}>Username</Text>
+                <TextInput 
+                  style={s.input} 
+                  value={username} 
+                  onChangeText={setUsername} 
+                  onBlur={async () => {
+                    updateSettings({ username });
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (user) {
+                      await supabase.from('profiles').update({ username }).eq('id', user.id);
+                    }
+                  }} 
+                  placeholder="username" 
+                  placeholderTextColor={Colors.textMuted} 
+                  autoCapitalize="none"
+                />
+              </View>
+              <View style={s.crd}>
+                <Text style={s.cL}>Full Name</Text>
                 <TextInput 
                   style={s.input} 
                   value={userName} 
                   onChangeText={setUserName} 
-                  onBlur={() => updateSettings({ userName })} 
+                  onBlur={async () => {
+                    updateSettings({ userName });
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (user) {
+                      await supabase.from('profiles').update({ full_name: userName }).eq('id', user.id);
+                    }
+                  }} 
                   placeholder="Your Full Name" 
                   placeholderTextColor={Colors.textMuted} 
                 />

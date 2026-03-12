@@ -4,7 +4,8 @@ import {
   Shield, MapPin, Trash2, AlertTriangle, 
   Clock, User, Phone, Mail, LayoutDashboard, 
   Bell, FileText, Users, ShieldCheck, 
-  BarChart3, Settings as SettingsIcon, LogOut 
+  BarChart3, Settings as SettingsIcon, LogOut,
+  AlertCircle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import GoogleMapReact from 'google-map-react';
@@ -22,6 +23,7 @@ interface Complaint {
   user_email: string;
   user_name: string;
   user_phone: string;
+  media_url?: string;
   created_at: string;
 }
 
@@ -33,6 +35,9 @@ interface Alert {
   longitude: number;
   status: 'active' | 'resolved';
   created_at: string;
+  audio_url?: string;
+  emergency_contacts?: any[];
+  police_status?: 'none' | 'dispatched';
 }
 
 interface UserProfile {
@@ -49,6 +54,7 @@ interface SafeZone {
   latitude: number;
   longitude: number;
   radius: number;
+  zone_type?: 'safe' | 'unsafe';
 }
 
 const MapMarker = ({ type, text }: { type: 'incident' | 'safe' | 'alert', text?: string, lat: number, lng: number }) => (
@@ -121,20 +127,64 @@ export default function App() {
   }
 
   const updateStatus = async (id: string, status: 'approved' | 'rejected') => {
-    await supabase.from('complaints').update({ status }).eq('id', id);
+    const { error } = await supabase.from('complaints').update({ status }).eq('id', id);
+    if (error) {
+      alert('Error updating status: ' + error.message);
+    } else {
+      alert(`Incident successfully ${status}!`);
+    }
     fetchData();
   };
 
   const deleteComplaint = async (id: string) => {
-    if (window.confirm('Are you sure?')) {
-      await supabase.from('complaints').delete().eq('id', id);
+    if (window.confirm('Are you sure you want to delete this report?')) {
+      const { error } = await supabase.from('complaints').delete().eq('id', id);
+      if (error) alert('Error deleting: ' + error.message);
       fetchData();
     }
   };
 
   const resolveAlert = async (id: string) => {
-    await supabase.from('emergency_alerts').update({ status: 'resolved' }).eq('id', id);
-    fetchData();
+    const { error } = await supabase.from('emergency_alerts').update({ status: 'resolved' }).eq('id', id);
+    if (!error) {
+      setAlerts(prev => prev.map(a => a.id === id ? { ...a, status: 'resolved' } : a));
+    } else {
+      alert('Error resolving alert: ' + error.message);
+    }
+  };
+
+  const togglePoliceStatus = async (id: string, current: string) => {
+    const nextStatus = current === 'none' ? 'dispatched' : 'none';
+    const { error } = await supabase.from('emergency_alerts').update({ police_status: nextStatus }).eq('id', id);
+    if (!error) {
+      setAlerts(prev => prev.map(a => a.id === id ? { ...a, police_status: nextStatus as any } : a));
+      if (nextStatus === 'dispatched') {
+        const alertObj = alerts.find(a => a.id === id);
+        window.alert(`🚨 POLICE DISPATCHED to ${alertObj?.latitude.toFixed(4)}, ${alertObj?.longitude.toFixed(4)}\nUser: ${alertObj?.user_name || 'Anonymous'}`);
+      }
+    } else {
+      alert('Error updating police status: ' + error.message);
+    }
+  };
+
+  const markAsUnsafe = async (alertObj: Alert) => {
+    const zoneName = window.prompt('Enter a name for this Unsafe Area:', `High Risk Area - ${alertObj.user_name || 'SOS'}`);
+    if (zoneName) {
+      const { error } = await supabase.from('safe_zones').insert([{
+        name: zoneName,
+        latitude: alertObj.latitude,
+        longitude: alertObj.longitude,
+        zone_type: 'unsafe',
+        radius: 200, // Default for unsafe areas
+        is_active: true
+      }]);
+      if (error) {
+        alert('Error marking as unsafe: ' + error.message);
+      } else {
+        alert('Location marked as UNSAFE area! 🚨');
+        fetchData();
+      }
+    }
   };
 
   const addSafeZone = async () => {
@@ -349,20 +399,61 @@ export default function App() {
                   alerts.map(a => (
                     <div key={a.id} className="alert-row" style={{ borderColor: a.status === 'active' ? 'var(--accent)' : 'var(--border)' }}>
                       <div className={a.status === 'active' ? 'alert-dot pulse' : ''} style={{ backgroundColor: a.status === 'active' ? 'var(--accent)' : 'var(--text-secondary)' }}></div>
+                      
                       <div style={{ flex: 1 }}>
                         <p style={{ fontWeight: 800 }}>{a.user_name || 'Anonymous SOS'}</p>
                         <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{a.user_phone || 'No phone provided'}</p>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.9rem', flex: 1 }}>
                         <Clock size={14} /> {format(new Date(a.created_at), 'HH:mm:ss, MMM d')}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
                         <MapPin size={16} color="var(--accent)" />
                         <span style={{ fontSize: '0.9rem' }}>{a.latitude.toFixed(4)}, {a.longitude.toFixed(4)}</span>
                       </div>
-                      {a.status === 'active' && (
-                        <button className="btn-approve" onClick={() => resolveAlert(a.id)}>Mark Resolved</button>
+                      
+                      {a.audio_url && (
+                        <div style={{ marginRight: '1rem' }}>
+                          <audio controls src={a.audio_url} style={{ height: '30px', width: '200px' }} />
+                        </div>
                       )}
+
+                      <div style={{ flex: 2 }}>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', marginBottom: '4px' }}>Family / Emergency Contacts</p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                          {a.emergency_contacts && a.emergency_contacts.length > 0 ? (
+                            a.emergency_contacts.map((contact: any, idx: number) => (
+                              <div key={idx} style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg-secondary)', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border)', display: 'flex', gap: '4px' }}>
+                                <span style={{ fontWeight: 700 }}>{contact.name || 'Contact'}</span>
+                                <span style={{ color: 'var(--text-secondary)' }}>{contact.phone}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>No emergency contacts added by user</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {a.status === 'active' && (
+                          <>
+                            {a.police_status === 'dispatched' ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--safe)', fontSize: '0.8rem', fontWeight: 800, border: '1px solid var(--safe)', padding: '6px 12px', borderRadius: '4px' }}>
+                                <ShieldCheck size={14} /> Police Notified
+                              </div>
+                            ) : (
+                              <button className="btn-reject" onClick={() => togglePoliceStatus(a.id, a.police_status || 'none')}>Notify Police</button>
+                            )}
+                            <button className="btn-reject" style={{ backgroundColor: '#ff9800', borderColor: '#ff9800' }} onClick={() => markAsUnsafe(a)}>Mark Unsafe</button>
+                            <button className="btn-approve" onClick={() => resolveAlert(a.id)}>Mark Resolved</button>
+                          </>
+                        )}
+                        {a.status === 'resolved' && (
+                           <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', fontStyle: 'italic' }}>Resolved</div>
+                        )}
+                      </div>
                     </div>
                   ))
                 )}
@@ -384,6 +475,16 @@ export default function App() {
                     </div>
 
                     <p className="description">{c.description}</p>
+                    
+                    {c.media_url && c.media_url.startsWith('http') && (
+                      <div style={{ marginBottom: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                        <img 
+                          src={c.media_url} 
+                          alt="Incident Report Media" 
+                          style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', display: 'block' }} 
+                        />
+                      </div>
+                    )}
                     
                     <div className="location" style={{ marginBottom: '1.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
@@ -441,24 +542,31 @@ export default function App() {
               <div>
                 <div className="stat-card" style={{ marginBottom: '2rem' }}>
                   <h3 style={{ marginBottom: '1rem' }}>Add New Safe Zone</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem' }}>
                     <input className="input" style={{ width: '100%', backgroundColor: '#000', color: '#fff', padding: '10px' }} placeholder="Zone Name" value={newZone.name} onChange={e => setNewZone({...newZone, name: e.target.value})} />
                     <input className="input" style={{ width: '100%', backgroundColor: '#000', color: '#fff', padding: '10px' }} placeholder="Latitude" type="number" value={newZone.lat || ''} onChange={e => setNewZone({...newZone, lat: parseFloat(e.target.value)})} />
                     <input className="input" style={{ width: '100%', backgroundColor: '#000', color: '#fff', padding: '10px' }} placeholder="Longitude" type="number" value={newZone.lng || ''} onChange={e => setNewZone({...newZone, lng: parseFloat(e.target.value)})} />
+                    <select className="input" style={{ width: '100%', backgroundColor: '#000', color: '#fff', padding: '10px' }} value={(newZone as any).zone_type || 'safe'} onChange={e => setNewZone({...newZone, zone_type: e.target.value as any} as any)}>
+                      <option value="safe">Safe Zone</option>
+                      <option value="unsafe">Unsafe Area</option>
+                    </select>
                     <button className="btn-approve" onClick={addSafeZone}>Add Zone</button>
                   </div>
                 </div>
 
                 <div className="complaints-list">
                   {safeZones.map(z => (
-                    <div key={z.id} className="alert-row">
-                      <ShieldCheck color="var(--safe)" />
+                    <div key={z.id} className="alert-row" style={{ borderLeft: `4px solid ${z.zone_type === 'unsafe' ? 'var(--accent)' : 'var(--safe)'}` }}>
+                      {z.zone_type === 'unsafe' ? <AlertCircle color="var(--accent)" /> : <ShieldCheck color="var(--safe)" />}
                       <div style={{ flex: 1 }}>
                         <p style={{ fontWeight: 800 }}>{z.name}</p>
                         <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{z.latitude}, {z.longitude}</p>
                       </div>
                       <div>
-                        <span className="badge badge-approved">{z.radius}m Radius</span>
+                        <span className={`badge badge-${z.zone_type === 'unsafe' ? 'rejected' : 'approved'}`}>
+                          {z.zone_type === 'unsafe' ? '🚨 UNSAFE AREA' : '✅ SAFE ZONE'}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', marginLeft: '8px', color: 'var(--text-secondary)' }}>{z.radius}m Radius</span>
                       </div>
                       <button className="btn-delete" onClick={() => deleteSafeZone(z.id)} style={{ marginLeft: '1rem' }}><Trash2 size={16} /></button>
                     </div>
@@ -499,7 +607,7 @@ export default function App() {
                 <div className="stat-card" style={{ marginBottom: '2rem' }}>
                   <h3 style={{ marginBottom: '1.5rem', fontSize: '1.2rem' }}>Incident Categories Breakdown</h3>
                   <div style={{ display: 'grid', gap: '1rem' }}>
-                    {['Street Harassment', 'Poor Lighting', 'Suspicious Activity', 'Stalking', 'Workplace Harassment', 'Unsafe Public Transport', 'Safe Space', 'Emergency Help'].map(category => {
+                    {['Harassment', 'Unsafe Area', 'Driver Behavior', 'Street Lighting', 'Positive Story', 'Other'].map(category => {
                       const count = complaints.filter(c => c.category === category).length;
                       const percentage = complaints.length > 0 ? (count / complaints.length * 100).toFixed(1) : 0;
                       return (
@@ -509,7 +617,7 @@ export default function App() {
                             <div style={{ 
                               width: `${percentage}%`, 
                               height: '100%', 
-                              backgroundColor: category.includes('Safe') || category.includes('Help') ? 'var(--safe)' : 'var(--accent)',
+                              backgroundColor: category === 'Positive Story' ? 'var(--safe)' : 'var(--accent)',
                               transition: 'width 0.3s ease'
                             }} />
                           </div>

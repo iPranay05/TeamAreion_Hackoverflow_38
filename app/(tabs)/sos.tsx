@@ -52,17 +52,17 @@ export default function SOSScreen() {
       }
 
       const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
-      let contacts = [];
+      let contactsToAlert = [];
       
       try {
         const parsedContacts = savedContacts ? JSON.parse(savedContacts) : [];
-        contacts = Array.isArray(parsedContacts) ? parsedContacts : [];
+        contactsToAlert = Array.isArray(parsedContacts) ? parsedContacts : [];
       } catch (parseError) {
         console.warn('Failed to parse emergency contacts:', parseError);
-        contacts = [];
+        contactsToAlert = [];
       }
 
-      if (!Array.isArray(contacts) || contacts.length === 0) {
+      if (contactsToAlert.length === 0) {
         Alert.alert('No Contacts', 'Add emergency contacts first in Settings.');
         setSending(false);
         return;
@@ -73,45 +73,74 @@ export default function SOSScreen() {
       let locData = null;
       let locationLink = '';
       if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        locData = loc;
-        locationLink = `https://www.google.com/maps?q=${loc.coords.latitude}%2C${loc.coords.longitude}`;
+        try {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          locData = loc;
+          locationLink = `https://www.google.com/maps?q=${loc.coords.latitude}%2C${loc.coords.longitude}`;
+        } catch (locationError) {
+          console.warn('Failed to get location:', locationError);
+        }
       }
 
       // Log alert to Supabase for Admin Dashboard
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
-      
-      if (locData) {
-        await supabase.from('emergency_alerts').insert([{
-          user_id: user?.id,
-          user_name: profile?.full_name || user?.email,
-          user_phone: profile?.phone_number,
-          latitude: locData.coords.latitude,
-          longitude: locData.coords.longitude,
-          status: 'active'
-        }]);
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData?.user;
+        if (user) {
+          const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user.id).single();
+          
+          const userName = profile?.full_name || settings.userName || user.email;
+          const userPhone = profile?.phone_number || user.phone || user.user_metadata?.phone || '';
+
+          if (locData) {
+            const { error: dbError } = await supabase.from('emergency_alerts').insert([{
+              user_id: user.id,
+              user_name: userName,
+              user_phone: userPhone,
+              latitude: locData.coords.latitude,
+              longitude: locData.coords.longitude,
+              status: 'active',
+              emergency_contacts: contactsToAlert,
+              police_status: 'none'
+            }]);
+
+            if (dbError) {
+              console.warn("Offline/DB Error: Falling back to native SMS...");
+              const smsMessage = `🚨 SOS HELP! My live location: ${locationLink}`;
+              const phones = contactsToAlert.map((c: any) => c.phone);
+              if (phones.length > 0) {
+                const { sendSMSAsync } = await import('expo-sms');
+                await sendSMSAsync(phones, smsMessage);
+              }
+            }
+          }
+        }
+      } catch (supabaseError) {
+        console.warn('Logging alert failed:', supabaseError);
       }
 
-      const message = settings.sosMessage.replace('{link}', locationLink || 'Location blocked');
-      
-      // Send SMS to all contacts
-      for (const contact of contacts) {
-        if (contact && contact.phone) {
-          await sendTwilioSMS(
-            contact.phone,
-            message,
-            settings.twilioSid,
-            settings.twilioToken,
-            settings.twilioNumber
-          );
-        }
+      const message = settings.sosMessage.replace('{link}', locationLink || 'Location unavailable');
+      const phoneNumbers = contactsToAlert.map((c: any) => c.phone).filter(Boolean);
+
+      console.log('Sending SOS to:', phoneNumbers);
+      console.log('Message content:', message);
+
+      if (phoneNumbers.length > 0) {
+        await sendTwilioSMS(
+          phoneNumbers,
+          message,
+          settings.twilioSid,
+          settings.twilioToken,
+          settings.twilioNumber
+        );
+        Alert.alert('SOS Sent', 'Your contacts have been notified and emergency has been logged.');
+      } else {
+        throw new Error('No valid phone numbers found for your emergency contacts.');
       }
       
-      Alert.alert('SOS Sent', 'Your contacts have been notified and emergency has been logged.');
     } catch (err: any) {
       console.error('Manual SOS Error:', err);
-      Alert.alert('SOS Sent', 'Emergency alert has been processed.');
+      Alert.alert('SOS Failed', err.message || 'An error occurred while sending the emergency alert.');
     } finally {
       setSending(false);
     }

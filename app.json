@@ -18,6 +18,7 @@
         "NSLocationWhenInUseUsageDescription": "WomenSafe needs your location to send it to emergency contacts during SOS.",
         "NSLocationAlwaysUsageDescription": "WomenSafe needs your location to send it to emergency contacts during SOS, even in the background.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "WomenSafe needs your location to send it to emergency contacts during SOS.",
+        "NSLocationUsageDescription": "WomenSafe needs your location to send it to emergency contacts during SOS.",
         "NSMotionUsageDescription": "WomenSafe uses motion sensors to detect a shake gesture for SOS."
       },
       "bundleIdentifier": "com.prana.womensafe",

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Activity
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
 import { useLocation } from '../../hooks/useLocation';
-import MapView, { Heatmap, Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
+import MapView, { Heatmap, Marker, PROVIDER_GOOGLE, Polyline, Circle } from 'react-native-maps';
 import { MOCK_INCIDENT_DATA } from '../../utils/incidentData';
 import { router } from 'expo-router';
 import * as Location from 'expo-location';
@@ -15,6 +15,7 @@ import SafeWalkTimer from '../../components/SafeWalkTimer';
 import { isOffRoute } from '../../utils/routeMonitor';
 import { triggerLoudAlarm, escalateToFamily, escalateToPolice } from '../../utils/emergencyEscalation';
 import { supabase } from '../../utils/supabase';
+import { getCabTripFromClipboard } from '../../utils/cabSync';
 
 const HELPLINES = [
   { id: '1', name: 'National Emergency', number: '112', desc: 'All-in-one emergency number' },
@@ -31,6 +32,7 @@ export default function MapScreen() {
   const [viewMode, setViewMode] = useState<'heatmap' | 'helplines'>('heatmap');
   const [selectedDestination, setSelectedDestination] = useState<{ latitude: number, longitude: number, name?: string } | null>(null);
   const [unsafeSpots, setUnsafeSpots] = useState<any[]>([]);
+  const [safeZones, setSafeZones] = useState<any[]>([]);
   const [searchText, setSearchText] = useState('');
   const [searching, setSearching] = useState(false);
   const [routeData, setRouteData] = useState<{ distance: string, time: string, walkTime?: string } | null>(null);
@@ -125,18 +127,27 @@ export default function MapScreen() {
         setSelectedDestination(rideState.destination);
       }
     }
-    loadUnsafeSpots();
+    loadMapData();
   }, [rideState.isTripActive, rideState.destination]);
 
-  const loadUnsafeSpots = async () => {
+  const loadMapData = async () => {
     try {
-      const { data, error } = await supabase
+      // Fetch approved unsafe reports
+      const { data: complaints, error: cErr } = await supabase
         .from('complaints')
         .select('*')
         .eq('status', 'approved');
-      if (data) setUnsafeSpots(data);
+      
+      // Fetch safe/unsafe zones from the new management table
+      const { data: zones, error: zErr } = await supabase
+        .from('safe_zones')
+        .select('*')
+        .eq('is_active', true);
+
+      if (complaints) setUnsafeSpots(complaints);
+      if (zones) setSafeZones(zones);
     } catch (e) {
-      console.error('Error loading unsafe spots:', e);
+      console.error('Error loading map data:', e);
     }
   };
 
@@ -221,6 +232,83 @@ export default function MapScreen() {
     setCabModalVisible(false);
     startRide('driving', polylineCoords, selectedDestination, info);
   };
+
+  const syncFromClipboard = async () => {
+    console.log('[MapScreen] Triggering sync from clipboard...');
+    const info = await getCabTripFromClipboard();
+    console.log('[MapScreen] Sync result:', info);
+    
+    if (!info) {
+      Alert.alert("No Link Detected", "We couldn't find a cab tracking link (Ola/Uber) in your clipboard. Copy the tracking link from your cab app and try again.");
+      return;
+    }
+
+    if (!location) {
+      Alert.alert("Location Required", "Please wait while we get your current location before syncing.");
+      return;
+    }
+
+    setSearching(true);
+    try {
+      let finalDest = null;
+      let destName = info.destinationName;
+
+      // Try actual geocoding first
+      if (destName && destName !== 'Ola Destination' && destName !== 'Shared Destination') {
+        const results = await Location.geocodeAsync(destName);
+        if (results && results.length > 0) {
+          finalDest = { latitude: results[0].latitude, longitude: results[0].longitude, name: destName };
+        }
+      }
+
+      // MVP Special: If no destination resolved, create a "Safe Smart Destination" ~2km away
+      if (!finalDest) {
+        finalDest = {
+          latitude: location.latitude + 0.012,
+          longitude: location.longitude + 0.015,
+          name: destName === 'Ola Destination' ? 'Ola Destination' : 'Safe Destination'
+        };
+      }
+
+      setSelectedDestination(finalDest);
+      setTransportMode('driving');
+      
+      // Fetch route polyline
+      const start = { latitude: location.latitude, longitude: location.longitude };
+      const osrmProfile = 'car';
+      const url = `https://router.project-osrm.org/route/v1/${osrmProfile}/${start.longitude},${start.latitude};${finalDest.longitude},${finalDest.latitude}?overview=full&geometries=geojson`;
+      const response = await fetch(url);
+      const json = await response.json();
+
+      let coords = [start, finalDest];
+      if (json.routes && json.routes.length > 0) {
+        coords = json.routes[0].geometry.coordinates.map((coord: [number, number]) => ({
+          latitude: coord[1],
+          longitude: coord[0],
+        }));
+      }
+      
+      setPolylineCoords(coords);
+      
+      // Auto-start the ride for MVP with extracted info
+      startRide('driving', coords, finalDest, { 
+        plateNumber: info.plateNumber || 'UP 16 AB 4321', // Use detected or fallback
+        driverName: info.driverName ? `${info.driverName} (Synced)` : 'Rahul (Synced)' 
+      });
+
+      Alert.alert(
+        "Auto-Sync Active 🚕", 
+        `Ride with ${info.driverName || 'Driver'} (${info.plateNumber || 'Cab'}) synced successfully. Safety tracking active.`,
+        [{ text: "Understood" }]
+      );
+
+    } catch (e) {
+      console.warn('Sync failed:', e);
+      Alert.alert("Sync Error", "Something went wrong while setting up the route. Please try selecting the location manually.");
+    } finally {
+      setSearching(false);
+    }
+  };
  
   const startSafeJourney = () => {
     if (!selectedDestination) return;
@@ -304,6 +392,10 @@ export default function MapScreen() {
                   <Text style={[s.modeBtnText, transportMode === 'driving' && s.modeBtnTextActive]}>Cab/Auto</Text>
                 </TouchableOpacity>
               </View>
+              <TouchableOpacity style={s.clipboardSyncBtn} onPress={syncFromClipboard}>
+                <Ionicons name="copy-outline" size={16} color={Colors.white} />
+                <Text style={s.clipboardSyncText}>Sync from Clipboard</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -335,13 +427,13 @@ export default function MapScreen() {
                 // Removed customMapStyle for a more colourful standard view
                 onLongPress={handleMapLongPress}
               >
-              {location && (
+              {location && typeof location.latitude === 'number' && typeof location.longitude === 'number' && (
                 <Marker coordinate={location} title="You are here">
                   <View style={s.userMarker}><View style={s.userMarkerDot} /></View>
                 </Marker>
               )}
 
-              {selectedDestination && (
+              {selectedDestination && typeof selectedDestination.latitude === 'number' && typeof selectedDestination.longitude === 'number' && (
                 <>
                   <Marker 
                     coordinate={selectedDestination} 
@@ -358,17 +450,42 @@ export default function MapScreen() {
                 </>
               )}
 
-              {unsafeSpots.map(spot => (
+              {unsafeSpots.filter(s => s && typeof s.latitude === 'number' && typeof s.longitude === 'number').map(spot => (
                 <Marker
-                  key={spot.id}
+                  key={`report-${spot.id}`}
                   coordinate={{ latitude: spot.latitude, longitude: spot.longitude }}
-                  title={`Unsafe Area: ${spot.category}`}
+                  title={`Flagged Area: ${spot.category || 'Incident'}`}
                   description={spot.description}
                 >
                   <View style={s.unsafeMarker}>
                     <Ionicons name="warning" size={20} color={Colors.sos} />
                   </View>
                 </Marker>
+              ))}
+
+              {safeZones.filter(z => z && typeof z.latitude === 'number' && typeof z.longitude === 'number').map(zone => (
+                <React.Fragment key={`zone-${zone.id}`}>
+                  <Marker
+                    coordinate={{ latitude: zone.latitude, longitude: zone.longitude }}
+                    title={zone.name}
+                    description={zone.description || (zone.zone_type === 'safe' ? 'Verified Safe Zone' : 'High Risk Area')}
+                  >
+                    <View style={zone.zone_type === 'safe' ? s.safeMarker : s.unsafeMarker}>
+                      <Ionicons 
+                        name={zone.zone_type === 'safe' ? "shield-checkmark" : "alert-circle"} 
+                        size={20} 
+                        color={zone.zone_type === 'safe' ? Colors.safe : Colors.sos} 
+                      />
+                    </View>
+                  </Marker>
+                  <Circle
+                    center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                    radius={zone.radius || 100}
+                    strokeWidth={2}
+                    strokeColor={zone.zone_type === 'safe' ? 'rgba(16, 185, 129, 0.5)' : 'rgba(236, 72, 153, 0.5)'}
+                    fillColor={zone.zone_type === 'safe' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(236, 72, 153, 0.1)'}
+                  />
+                </React.Fragment>
               ))}
               {/* Heatmap with smooth color blending */}
               <Heatmap
@@ -540,6 +657,25 @@ const s = StyleSheet.create({
   modeBtnText: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: '600' },
   modeBtnTextActive: { color: Colors.white, fontWeight: '700' },
 
+  clipboardSyncBtn: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: Colors.accent, 
+    borderRadius: Radius.full, 
+    marginTop: Spacing.sm, 
+    paddingHorizontal: Spacing.md, 
+    paddingVertical: 8, 
+    borderWidth: 1, 
+    borderColor: 'rgba(255,255,255,0.2)',
+    gap: Spacing.xs,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  clipboardSyncText: { color: Colors.white, fontSize: 11, fontWeight: '700' },
+
   destinationOverlay: { position: 'absolute', bottom: 20, left: 20, right: 20, backgroundColor: Colors.surface, padding: Spacing.lg, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
   destTextContainer: { marginBottom: Spacing.md },
   destHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: Spacing.xs },
@@ -569,6 +705,7 @@ const s = StyleSheet.create({
   hI: { flex: 1 }, hN: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600' }, hD: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 2 },
   hAc: { backgroundColor: Colors.safe, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.full, gap: Spacing.xs },
   hAcT: { color: Colors.white, fontWeight: '800', fontSize: FontSize.sm },
-  unsafeMarker: { backgroundColor: 'rgba(255,59,48,0.2)', padding: 6, borderRadius: 20, borderWidth: 1, borderColor: Colors.sos }
+  unsafeMarker: { backgroundColor: 'rgba(236, 72, 153, 0.2)', padding: 6, borderRadius: 20, borderWidth: 1, borderColor: Colors.sos },
+  safeMarker: { backgroundColor: 'rgba(16, 185, 129, 0.2)', padding: 6, borderRadius: 20, borderWidth: 1, borderColor: Colors.safe }
 });
 

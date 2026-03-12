@@ -42,20 +42,12 @@ export default function AuthScreen() {
 
         if (error) throw error;
         
-        // Profiles are handled by Supabase triggers (or we do it manually if no trigger)
-        // For this demo, we'll manually insert if needed, but Supabase auth metadata is often enough.
-        // Let's manually create the profile for the admin dashboard query.
-        if (data.user) {
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .insert([{ id: data.user.id, full_name: fullName, phone_number: phone }]);
-          
-          if (profileError) console.error('Profile creation error:', profileError);
-        }
-
-        Alert.alert('Success', 'Account created! You can now login.', [
-          { text: 'OK', onPress: () => setIsSignUp(false) }
-        ]);
+        // Auto-login after signup (database triggers now handle confirmation and profile creation)
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) throw signInError;
+        
+        Alert.alert('Success', 'Account created! You are now logged in.');
+        router.replace('/');
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
