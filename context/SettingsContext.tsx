@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-interface Settings { username: string; userName: string; shakeToSOS: boolean; safeMode: boolean; sosMessage: string; fakeCaller: string; twilioSid: string; twilioToken: string; twilioNumber: string; }
+interface Settings { username: string; userName: string; shakeToSOS: boolean; safeMode: boolean; sosMessage: string; fakeCaller: string; twilioSid: string; twilioToken: string; twilioNumber: string; joinSafetyNetwork: boolean; }
 const defaultSettings: Settings = { 
   username: 'user',
   userName: 'My Name', 
@@ -11,7 +11,8 @@ const defaultSettings: Settings = {
   fakeCaller: 'Mom', 
   twilioSid: process.env.EXPO_PUBLIC_TWILIO_SID || '', 
   twilioToken: process.env.EXPO_PUBLIC_TWILIO_TOKEN || '', 
-  twilioNumber: process.env.EXPO_PUBLIC_TWILIO_NUMBER || '' 
+  twilioNumber: process.env.EXPO_PUBLIC_TWILIO_NUMBER || '',
+  joinSafetyNetwork: false
 };
 const KEY = '@app_settings';
 

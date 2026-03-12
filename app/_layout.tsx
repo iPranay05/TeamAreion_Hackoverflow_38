@@ -5,6 +5,7 @@ import { Colors, Spacing, Radius, FontSize } from '../constants/theme';
 import { SettingsProvider, useSettings } from '../context/SettingsContext';
 import { useShakeDetector } from '../hooks/useShakeDetector';
 import { sendTwilioSMS } from '../utils/twilio';
+import { startGuardianScanning, stopGuardianScanning, estimateDistance } from '../utils/bluetoothSOS';
 import * as Notifications from 'expo-notifications';
 import { Alert, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -24,7 +25,9 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
   const { rideState, setEmergencyPhase, setEscalationTimer } = useSafeRide();
   const [alarmSound, setAlarmSound] = useState<any>(null);
   const [isMounted, setIsMounted] = useState(false);
- 
+  const [nearbyAlert, setNearbyAlert] = useState<any>(null);
+  const [offlineSOSSignal, setOfflineSOSSignal] = useState<any>(null);
+
   useEffect(() => {
     // Delay chatbot mount for better initial load performance
     const timer = setTimeout(() => setIsMounted(true), 1000);
@@ -38,12 +41,12 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       safeMode: settings.safeMode
     });
   }, [settings.shakeToSOS, settings.safeMode]);
- 
+
   useEffect(() => {
     if (settings.safeMode && !settings.shakeToSOS) {
       updateSettings({ shakeToSOS: true });
     }
-    
+
     Audio.setAudioModeAsync({
       allowsRecordingIOS: false,
       playsInSilentModeIOS: true,
@@ -52,18 +55,18 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       playThroughEarpieceAndroid: false
     });
   }, [settings.safeMode]);
- 
+
   useEffect(() => {
     if (!rideState.isTripActive || !rideState.expectedRoute.length || rideState.emergencyPhase !== 'NONE') return;
 
     const checkRoute = async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({});
-          const offRoute = isOffRoute(loc.coords, rideState.expectedRoute);
-          if (offRoute) {
-            handleDeviationDetected();
-          }
+        const loc = await Location.getCurrentPositionAsync({});
+        const offRoute = isOffRoute(loc.coords, rideState.expectedRoute);
+        if (offRoute) {
+          handleDeviationDetected();
+        }
       }
     };
 
@@ -126,14 +129,14 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       console.log('[SOS] Stopping recording...');
       const currentRecording = recordingRef.current;
       recordingRef.current = null; // Clear immediately to prevent multiple calls
-      
+
       await currentRecording.stopAndUnloadAsync();
       const uri = currentRecording.getURI();
 
       if (uri) {
         console.log('[SOS] Uploading audio:', uri);
         const fileName = `sos_${alertId}_${Date.now()}.m4a`;
-        
+
         // Use FormData for robust React Native uploads
         const formData = new FormData();
         formData.append('file', {
@@ -159,11 +162,11 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
         const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
         const parsedContacts = savedContacts ? JSON.parse(savedContacts) : [];
         const contacts = Array.isArray(parsedContacts) ? parsedContacts.filter((c: any) => c && c.phone) : [];
-        
+
         if (contacts.length > 0) {
           const phones = contacts.map((c: any) => c.phone.trim());
           const message = `🚨 Audio evidence recorded for ${settings.userName || 'User'}. Listen here: ${publicUrl}`;
-          
+
           await sendTwilioSMS(
             phones,
             message,
@@ -182,13 +185,13 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
   const handleEscalateToFamily = async () => {
     setEscalationTimer(null);
     setEmergencyPhase('ESCALATING_FAMILY');
-    
+
     try {
       // Start recording immediately
       startRecording();
 
       const loc = await Location.getCurrentPositionAsync({});
-      
+
       // Fetch emergency contacts snapshot
       const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
       const contactsSnapshot = savedContacts ? JSON.parse(savedContacts) : [];
@@ -197,7 +200,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       const { data: { user } } = await supabase.auth.getUser();
       // Fresh fetch to ensure we have the very latest name/phone
       const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
-      
+
       const userName = profile?.full_name || settings.userName || user?.email;
       const userPhone = profile?.phone_number || user?.phone || user?.user_metadata?.phone || '';
 
@@ -259,7 +262,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
 
       const savedContacts = await AsyncStorage.getItem('@emergency_contacts');
       let contacts = [];
-      
+
       try {
         const parsedContacts = savedContacts ? JSON.parse(savedContacts) : [];
         contacts = Array.isArray(parsedContacts) ? parsedContacts : [];
@@ -267,7 +270,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
         console.warn('Failed to parse emergency contacts:', parseError);
         contacts = [];
       }
-      
+
       const { status } = await Location.requestForegroundPermissionsAsync();
       let locData = null;
       let locationLink = '';
@@ -280,7 +283,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       // Log alert to Supabase for Admin Dashboard
       const { data: { user } } = await supabase.auth.getUser();
       const { data: profile } = await supabase.from('profiles').select('full_name, phone_number').eq('id', user?.id).single();
-      
+
       const userName = profile?.full_name || settings.userName || user?.email;
       const userPhone = profile?.phone_number || user?.phone || user?.user_metadata?.phone || '';
 
@@ -320,7 +323,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
       }
 
       const message = settings.sosMessage.replace('{link}', locationLink);
-      
+
       for (const contact of contacts) {
         if (contact && contact.phone) {
           await sendTwilioSMS(
@@ -335,6 +338,79 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
     } catch (err) {
       console.error('SOS Background Error:', err);
     }
+  };
+
+  useEffect(() => {
+    if (!settings.joinSafetyNetwork || !session?.user?.id) return;
+
+    console.log('[Guardian] Subscribing to emergency alerts...');
+    const channel = supabase
+      .channel('guardian-alerts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'emergency_alerts', filter: `status=eq.active` },
+        async (payload) => {
+          const alert = payload.new;
+          if (alert.user_id === session.user.id) return; // Don't notify self
+
+          // Check distance
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const currentLoc = await Location.getCurrentPositionAsync({});
+            const distance = getDistance(
+              currentLoc.coords.latitude,
+              currentLoc.coords.longitude,
+              alert.latitude,
+              alert.longitude
+            );
+
+            if (distance <= 5) { // 5km radius
+              setNearbyAlert({ ...alert, distance });
+              // Play a subtle notification sound (reusing alarm logic but maybe quieter?)
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [settings.joinSafetyNetwork, session?.user?.id]);
+
+  useEffect(() => {
+    if (settings.joinSafetyNetwork) {
+      startGuardianScanning();
+    } else {
+      stopGuardianScanning();
+    }
+  }, [settings.joinSafetyNetwork]);
+
+  useEffect(() => {
+    const subscription = Notifications.addNotificationReceivedListener(notification => {
+      const data = notification.request.content.data;
+      if (data?.type === 'BLE_SOS') {
+        setOfflineSOSSignal({
+          name: data.name,
+          rssi: data.rssi,
+          timestamp: Date.now()
+        });
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
+
+  const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
   };
 
   useShakeDetector(sendSOS, settings.shakeToSOS);
@@ -352,12 +428,67 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
           <TouchableOpacity style={gs.imSafeBtn} onPress={stopGlobalAlarm}>
             <Text style={gs.imSafeText}>YES, I AM SAFE</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={gs.callPoliceNow} onPress={async () => {
-             const loc = await Location.getCurrentPositionAsync({});
-             await escalateToPolice(rideState.cabInfo, loc.coords, settings);
-          }}>
-            <Text style={gs.callPoliceText}>Call Police Now</Text>
-          </TouchableOpacity>
+        </View>
+      )}
+
+      {nearbyAlert && (
+        <View style={gs.guardianOverlay}>
+          <View style={gs.guardianContent}>
+            <Ionicons name="shield-half" size={40} color={Colors.white} />
+            <Text style={gs.guardianTitle}>HELP NEEDED NEARBY! 🚨</Text>
+            <Text style={gs.guardianSubtitle}>
+              Someone is in danger approx {nearbyAlert.distance.toFixed(1)}km from you.
+            </Text>
+            <Text style={gs.guardianName}>{nearbyAlert.user_name}</Text>
+            
+            <View style={gs.guardianActions}>
+              <TouchableOpacity 
+                style={[gs.guardianBtn, gs.guardianAccept]} 
+                onPress={() => {
+                  router.push({
+                    pathname: '/(tabs)/map',
+                    params: { 
+                      targetLat: nearbyAlert.latitude, 
+                      targetLng: nearbyAlert.longitude,
+                      targetName: `${nearbyAlert.user_name} (SOS)`
+                    }
+                  });
+                  setNearbyAlert(null);
+                }}
+              >
+                <Text style={gs.guardianBtnText}>VIEW ON MAP</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[gs.guardianBtn, gs.guardianDismiss]} 
+                onPress={() => setNearbyAlert(null)}
+              >
+                <Text style={gs.guardianBtnText}>DISMISS</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {offlineSOSSignal && (
+        <View style={gs.offlineOverlay}>
+          <View style={gs.offlineContent}>
+            <View style={gs.offlineHeader}>
+              <Ionicons name="bluetooth" size={24} color={Colors.white} />
+              <Text style={gs.offlineTitle}>NEARBY OFFLINE SOS!</Text>
+            </View>
+            <Text style={gs.offlineText}>
+              A help signal was detected via Bluetooth from {offlineSOSSignal.name || 'someone'} nearby.
+            </Text>
+            <Text style={gs.offlineDist}>
+              Estimated Distance: {estimateDistance(offlineSOSSignal.rssi)}
+            </Text>
+            <TouchableOpacity 
+              style={gs.offlineDismiss} 
+              onPress={() => setOfflineSOSSignal(null)}
+            >
+              <Text style={gs.offlineBtnText}>UNDERSTOOD</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </>
@@ -370,8 +501,116 @@ const gs = StyleSheet.create({
   emergencySubtitle: { color: Colors.white, fontSize: FontSize.md, textAlign: 'center', marginTop: Spacing.md, marginBottom: Spacing.xl, lineHeight: 24 },
   imSafeBtn: { backgroundColor: Colors.safe, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg, borderRadius: Radius.full, width: '100%', alignItems: 'center' },
   imSafeText: { color: Colors.white, fontSize: FontSize.lg, fontWeight: '800' },
-  callPoliceNow: { marginTop: Spacing.xl, padding: Spacing.md },
-  callPoliceText: { color: Colors.sos, fontSize: FontSize.md, fontWeight: '700', textDecorationLine: 'underline' },
+  
+  guardianOverlay: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    right: 20,
+    zIndex: 3000,
+    elevation: 10,
+  },
+  guardianContent: {
+    backgroundColor: Colors.sos,
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+  },
+  guardianTitle: {
+    color: Colors.white,
+    fontSize: FontSize.lg,
+    fontWeight: '900',
+    marginTop: Spacing.sm,
+  },
+  guardianSubtitle: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: FontSize.sm,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  guardianName: {
+    color: Colors.white,
+    fontSize: FontSize.md,
+    fontWeight: '700',
+    marginTop: Spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+  },
+  guardianActions: {
+    flexDirection: 'row',
+    marginTop: Spacing.lg,
+    gap: Spacing.md,
+  },
+  guardianBtn: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+  },
+  guardianAccept: {
+    backgroundColor: Colors.white,
+  },
+  guardianDismiss: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  guardianBtnText: {
+    fontSize: FontSize.xs,
+    fontWeight: '800',
+    color: Colors.sos,
+  },
+  offlineOverlay: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    right: 20,
+    zIndex: 4000,
+  },
+  offlineContent: {
+    backgroundColor: '#2D3436', // Dark gray for offline
+    padding: Spacing.lg,
+    borderRadius: Radius.lg,
+    borderWidth: 2,
+    borderColor: Colors.sos,
+  },
+  offlineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: Spacing.sm,
+  },
+  offlineTitle: {
+    color: Colors.white,
+    fontSize: FontSize.md,
+    fontWeight: '900',
+  },
+  offlineText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: FontSize.sm,
+    marginBottom: 4,
+  },
+  offlineDist: {
+    color: Colors.sos,
+    fontSize: FontSize.sm,
+    fontWeight: '800',
+    marginBottom: Spacing.lg,
+  },
+  offlineDismiss: {
+    backgroundColor: Colors.sos,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+  },
+  offlineBtnText: {
+    color: Colors.white,
+    fontSize: FontSize.xs,
+    fontWeight: '800',
+  },
 });
 
 export default function RootLayout() {

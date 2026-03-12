@@ -8,6 +8,8 @@ import { useContacts } from '../../hooks/useContacts';
 import { registerBackgroundSOS, unregisterBackgroundSOS } from '../../utils/backgroundSOS';
 import { supabase } from '../../utils/supabase';
 import { router } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { injectSimulatedSOS } from '../../utils/bluetoothSOS';
 
 export default function SettingsScreen() {
   const { settings, updateSettings } = useSettings();
@@ -72,6 +74,23 @@ export default function SettingsScreen() {
     );
   };
 
+  const toggleGuardianMode = async (v: boolean) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { error } = await supabase.from('profiles').update({ is_guardian: v }).eq('id', user.id);
+        if (error) throw error;
+        updateSettings({ joinSafetyNetwork: v });
+        if (v) {
+          Alert.alert('Guardian Activated', 'Thank you for joining the safety network! You may receive alerts when someone nearby needs help.');
+        }
+      }
+    } catch (e) {
+      console.error('Guardian toggle error:', e);
+      Alert.alert('Error', 'Failed to update guardian status.');
+    }
+  };
+
   const shareLocation = () => {
     if (location) {
       const link = getMapLink(location);
@@ -83,6 +102,21 @@ export default function SettingsScreen() {
     } else {
       Alert.alert('Location Unavailable', 'Please enable GPS to share your location.');
     }
+  };
+
+  const simulateOfflineSOS = async () => {
+    injectSimulatedSOS('Guardian Test (Settings)');
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: "🚨 NEARBY OFFLINE SOS DETECTED!",
+        body: `A help signal was found via Bluetooth from Guardian Test very close to you.`,
+        data: { type: 'BLE_SOS', name: 'Guardian Test', rssi: -42 },
+        sound: 'alert.wav',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+      },
+      trigger: null,
+    });
+    Alert.alert("Test Active", "Look for the simulation overlay on your screen!");
   };
 
   return (
@@ -205,6 +239,27 @@ export default function SettingsScreen() {
               </View>
             </View>
             <Ionicons name="chevron-forward" size={24} color={Colors.textMuted} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Citizen Guardian Network */}
+        <View style={s.group}>
+          <Text style={s.gT}>Citizen Guardian Network 🏘️</Text>
+          <View style={[s.crd, s.rowCrd]}>
+            <View style={s.rT}>
+              <Text style={s.cL2}>Join Safety Network</Text>
+              <Text style={s.cS2}>Volunteer to receive alerts and help others nearby in emergencies</Text>
+            </View>
+            <Switch 
+              value={settings.joinSafetyNetwork} 
+              onValueChange={toggleGuardianMode} 
+              trackColor={{ false: Colors.surface, true: Colors.accent }} 
+              thumbColor={Colors.white} 
+            />
+          </View>
+          <TouchableOpacity style={s.simLink} onPress={simulateOfflineSOS}>
+            <Ionicons name="flask" size={16} color={Colors.accent} />
+            <Text style={s.simLinkText}>Test Bluetooth Detection Overlay</Text>
           </TouchableOpacity>
         </View>
 
@@ -549,5 +604,19 @@ const s = StyleSheet.create({
     color: Colors.textMuted, 
     fontSize: FontSize.sm, 
     fontWeight: '600' 
-  }
+  },
+  simLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: Spacing.md,
+    paddingTop: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  simLinkText: {
+    color: Colors.accent,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+  },
 });

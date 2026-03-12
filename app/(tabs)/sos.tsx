@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { supabase } from '../../utils/supabase';
 import * as Notifications from 'expo-notifications';
+import { startSOSAdvertising, stopSOSAdvertising, injectSimulatedSOS } from '../../utils/bluetoothSOS';
 
 export default function SOSScreen() {
   const { location, requestLocation, getMapLink } = useLocation();
@@ -125,6 +126,10 @@ export default function SOSScreen() {
       console.log('Sending SOS to:', phoneNumbers);
       console.log('Message content:', message);
 
+      // Start Bluetooth SOS Advertising (Offline mesh)
+      const userName = settings.userName || 'Someone';
+      await startSOSAdvertising(userName);
+
       if (phoneNumbers.length > 0) {
         await sendTwilioSMS(
           phoneNumbers,
@@ -146,6 +151,21 @@ export default function SOSScreen() {
     }
   };
 
+  const simulateNearbySOS = async () => {
+    injectSimulatedSOS('Guard (Test Beacon)');
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: "🚨 NEARBY OFFLINE SOS DETECTED!",
+        body: `A help signal was found via Bluetooth from Community Guard (Test) very close to you.`,
+        data: { type: 'BLE_SOS', name: 'Community Guard (Test)', rssi: -40 },
+        sound: 'alert.wav',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+      },
+      trigger: null,
+    });
+    Alert.alert("Simulation Started", "A mock Bluetooth SOS signal has been detected. Look for the overlay on your screen!");
+  };
+
   return (
     <ScrollView style={s.container} contentContainerStyle={s.scrollContent}>
       {/* Header Section */}
@@ -160,6 +180,14 @@ export default function SOSScreen() {
       {/* SOS Button Section */}
       <View style={s.sosWrapper}>
         <SOSButton onPress={sendManualSOS} sending={sending} />
+      </View>
+
+      <TouchableOpacity style={s.testBtn} onPress={simulateNearbySOS}>
+        <Ionicons name="flask-outline" size={20} color={Colors.textSecondary} />
+        <Text style={s.testBtnText}>TEST OFFLINE ALERTS (MOCK)</Text>
+      </TouchableOpacity>
+
+      <View style={s.infoContainer}>
         <Text style={s.sosHint}>
           {settings.shakeToSOS ? '📳 Shake phone 3 times to activate' : 'Press & Hold for 3 seconds'}
         </Text>
@@ -570,5 +598,29 @@ const s = StyleSheet.create({
     lineHeight: 16,
     flexWrap: 'wrap',
     flexShrink: 1
+  },
+  testBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: Spacing.sm,
+    padding: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    marginHorizontal: 60,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.xl,
+  },
+  testBtnText: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  infoContainer: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
   }
 });

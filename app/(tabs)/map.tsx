@@ -5,7 +5,7 @@ import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
 import { useLocation } from '../../hooks/useLocation';
 import MapView, { Heatmap, Marker, PROVIDER_GOOGLE, Polyline, Circle } from 'react-native-maps';
 import { MOCK_INCIDENT_DATA } from '../../utils/incidentData';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import * as Location from 'expo-location';
 import { getDistance } from '../../utils/arrivalMonitor';
 import { useSafeRide } from '../../context/SafeRideContext';
@@ -28,6 +28,7 @@ const HELPLINES = [
 export default function MapScreen() {
   const { location, loading, requestLocation } = useLocation();
   const { settings } = useSettings();
+  const { targetLat, targetLng, targetName } = useLocalSearchParams<{ targetLat: string, targetLng: string, targetName: string }>();
   const { rideState, startRide, stopRide, setEmergencyPhase, setEscalationTimer } = useSafeRide();
   const [viewMode, setViewMode] = useState<'heatmap' | 'helplines'>('heatmap');
   const [selectedDestination, setSelectedDestination] = useState<{ latitude: number, longitude: number, name?: string } | null>(null);
@@ -129,6 +130,20 @@ export default function MapScreen() {
     }
     loadMapData();
   }, [rideState.isTripActive, rideState.destination]);
+
+  useEffect(() => {
+    if (targetLat && targetLng) {
+      const lat = parseFloat(targetLat);
+      const lng = parseFloat(targetLng);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setSelectedDestination({
+          latitude: lat,
+          longitude: lng,
+          name: targetName || 'Rescue Location'
+        });
+      }
+    }
+  }, [targetLat, targetLng, targetName]);
 
   const loadMapData = async () => {
     try {

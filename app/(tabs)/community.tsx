@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Alert, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -5,6 +6,9 @@ import { Colors, Spacing, Radius, FontSize } from '../../constants/theme';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../utils/supabase';
+import { router } from 'expo-router';
+import * as Notifications from 'expo-notifications';
+import { injectSimulatedSOS } from '../../utils/bluetoothSOS';
 
 interface Post {
   id: string;
@@ -38,10 +42,47 @@ export default function CommunityScreen() {
   const [coords, setCoords] = useState<{lat: number; lng: number} | null>(null);
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
+  const [isGuardian, setIsGuardian] = useState(false);
+  const [activeAlertCount, setActiveAlertCount] = useState(0);
 
   useEffect(() => {
     loadPosts();
+    checkGuardianStatus();
+    loadActiveAlertCount();
   }, []);
+
+  const checkGuardianStatus = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data } = await supabase.from('profiles').select('is_guardian').eq('id', user.id).single();
+      if (data) setIsGuardian(data.is_guardian);
+    }
+  };
+
+  const loadActiveAlertCount = async () => {
+    const { count } = await supabase
+      .from('emergency_alerts')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'active');
+    setActiveAlertCount(count || 0);
+  };
+
+  const simulateNearbySignal = async () => {
+    // Injects into the Radar list
+    injectSimulatedSOS('Community Member (Test)');
+
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: "🚨 NEARBY OFFLINE SOS DETECTED!",
+        body: `A help signal was found via Bluetooth from Community Member (Test) very close to you.`,
+        data: { type: 'BLE_SOS', name: 'Community Member (Test)', rssi: -45 },
+        sound: 'alert.wav',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+      },
+      trigger: null,
+    });
+    Alert.alert("Test Started", "The offline SOS simulation has been triggered. Look for the overlay!");
+  };
 
   const loadPosts = async () => {
     setLoading(true);
@@ -322,9 +363,53 @@ export default function CommunityScreen() {
       <ScrollView
         style={s.feed}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadPosts(); }} />
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={() => { 
+              setRefreshing(true); 
+              loadPosts(); 
+              loadActiveAlertCount();
+            }} 
+            tintColor={Colors.sos}
+          />
         }
       >
+        {isGuardian && (
+          <TouchableOpacity 
+            style={s.guardianBanner}
+            onPress={() => router.push('/active-alerts')}
+          >
+            <View style={s.guardianIcon}>
+              <Ionicons name="shield-half" size={24} color={Colors.white} />
+            </View>
+            <View style={s.guardianInfo}>
+              <Text style={s.guardianTitle}>Guardian Dashboard</Text>
+              <Text style={s.guardianSub}>
+                {activeAlertCount > 0 
+                  ? `🚨 ${activeAlertCount} active help request(s) nearby!` 
+                  : 'System active: Monitoring for emergencies...'}
+              </Text>
+            </View>
+            {activeAlertCount > 0 && (
+              <View style={s.alertBadge}>
+                <Text style={s.alertBadgeText}>{activeAlertCount}</Text>
+              </View>
+            )}
+            <Ionicons name="chevron-forward" size={20} color={Colors.white} style={{ opacity: 0.7 }} />
+            
+            <TouchableOpacity 
+              style={s.bannerSimBtn} 
+              onPress={(e) => {
+                e.stopPropagation();
+                simulateNearbySignal();
+              }}
+            >
+              <Ionicons name="flask" size={16} color={Colors.white} />
+              <Text style={s.bannerSimText}>TEST</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        )}
+
         {loading && posts.length === 0 ? (
           <View style={s.loadingContainer}>
             <ActivityIndicator size="large" color={Colors.sos} />
@@ -408,6 +493,40 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border
   },
+  guardianBanner: {
+    backgroundColor: Colors.sos,
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    elevation: 4,
+    shadowColor: Colors.sos,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  guardianIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guardianInfo: { flex: 1 },
+  guardianTitle: { color: Colors.white, fontSize: FontSize.md, fontWeight: '800' },
+  guardianSub: { color: 'rgba(255,255,255,0.9)', fontSize: FontSize.xs, marginTop: 2 },
+  alertBadge: {
+    backgroundColor: Colors.white,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginRight: 4
+  },
+  alertBadgeText: { color: Colors.sos, fontSize: 10, fontWeight: '900' },
   title: { color: Colors.text, fontSize: FontSize.xxl, fontWeight: '800' },
   createBtn: { padding: Spacing.xs },
   feed: { flex: 1 },
@@ -488,7 +607,24 @@ const s = StyleSheet.create({
   statusBadgeText: {
     fontSize: 9,
     fontWeight: '800',
-    color: Colors.text,
+    color: Colors.sos,
+  },
+  bannerSimBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 40,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  bannerSimText: {
+    color: Colors.white,
+    fontSize: 10,
+    fontWeight: '800',
   },
   postDescription: {
     color: Colors.text,

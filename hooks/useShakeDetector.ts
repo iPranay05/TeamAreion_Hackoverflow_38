@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Accelerometer } from 'expo-sensors';
 import { Vibration } from 'react-native';
 
-const SHAKE_THRESHOLD = 1.35; // Very sensitive
+const SHAKE_THRESHOLD = 1.85; // Increased from 1.35 (less sensitive)
 const PATTERN_WINDOW_MS = 3000;
 const DEBOUNCE_MS = 300;
 
@@ -53,7 +53,7 @@ export function useShakeDetector(onShake: () => void, enabled: boolean) {
 
         lastShakeTime.current = now;
 
-        if (shakeCount.current >= 2) {
+        if (shakeCount.current >= 3) {
           console.log('SOS TRIGGERED by shake!');
           Vibration.vibrate([0, 500, 200, 500]); // Major vibration for trigger
           shakeCount.current = 0;
