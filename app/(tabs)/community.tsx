@@ -182,14 +182,19 @@ export default function CommunityScreen() {
       let uploadedUrl = null;
       if (mediaUri) {
         console.log('[Community] Uploading media:', mediaUri);
-        const fileName = `${user?.id}/${Date.now()}.jpg`;
+        
+        // Detect extension and type
+        const extension = mediaUri.split('.').pop()?.toLowerCase() || 'jpg';
+        const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(extension);
+        const fileName = `${user?.id}/${Date.now()}.${extension}`;
+        const mimeType = isVideo ? `video/${extension === 'mov' ? 'quicktime' : extension}` : 'image/jpeg';
         
         // Use FormData for robust React Native uploads
         const formData = new FormData();
         formData.append('file', {
           uri: mediaUri,
           name: fileName,
-          type: 'image/jpeg'
+          type: mimeType
         } as any);
         
         const { data: uploadData, error: uploadError } = await supabase.storage
@@ -198,7 +203,7 @@ export default function CommunityScreen() {
 
         if (uploadError) {
           console.error('[Community] Upload error:', uploadError);
-          throw new Error('Failed to upload image');
+          throw new Error('Failed to upload media');
         }
 
         // Get public URL

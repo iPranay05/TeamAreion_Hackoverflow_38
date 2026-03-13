@@ -28,8 +28,8 @@ export async function triggerLoudAlarm() {
 /**
  * Escalates to family via Twilio calls (Primary) and SMS (All).
  */
-export async function escalateToFamily(cabInfo: any, location: any, settings: any) {
-  console.log("[Escalation] Starting escalation to family...");
+export async function escalateToFamily(cabInfo: any, location: any, settings: any, type: 'ride' | 'walk' | 'manual' = 'ride') {
+  console.log(`[Escalation] Starting escalation to family (Type: ${type})...`);
   const contactsStr = await AsyncStorage.getItem(CONTACTS_KEY);
   if (!contactsStr) {
     console.warn("[Escalation] No contacts found in AsyncStorage");
@@ -47,26 +47,41 @@ export async function escalateToFamily(cabInfo: any, location: any, settings: an
   const phones = contacts.map((c: any) => c.phone.trim());
   const primaryPhone = phones[0];
   
-  const locLink = `https://www.google.com/maps?q=${location.latitude}%2C${location.longitude}`;
-  const message = `🚨 SOS: ${settings.userName || 'User'}'s ride deviated!
+  const locLink = `https://www.google.com/maps?q=${location?.latitude}%2C${location?.longitude}`;
+  
+  let message = "";
+  let twiml = "";
+
+  if (type === 'walk') {
+    message = `🚨 SOS: ${settings.userName || 'User'}'s Safe Walk timer expired!
+📍 ${locLink}`;
+    twiml = `<Response>
+      <Say voice="alice" loop="2">Safety Alert for ${settings.userName || 'User'}. Their Safe Walk timer has expired, and they have not checked in. Please check on them immediately. We have sent an SMS with their live location.</Say>
+    </Response>`;
+  } else {
+    message = `🚨 SOS: ${settings.userName || 'User'}'s ride deviated!
 🚕 ${cabInfo?.plateNumber || 'Cab'}
 👤 ${cabInfo?.driverName || 'Driver'}
 📍 ${locLink}`;
+    twiml = `<Response>
+      <Say voice="alice" loop="2">Safety Alert for ${settings.userName || 'User'}. Their cab has deviated from its route. Please check on them immediately. Are they safe? We have sent an SMS with their live location.</Say>
+    </Response>`;
+  }
 
   console.log(`[Escalation] Sending SMS to ${phones.length} contacts...`);
   
   // 1. Send SMS to ALL contacts
   try {
     await sendTwilioSMS(phones, message, settings.twilioSid, settings.twilioToken, settings.twilioNumber);
-  } catch (smsErr) {
-    console.error("[Escalation] SMS step failed, but continuing to call:", smsErr);
+  } catch (smsErr: any) {
+    console.error("[Escalation] SMS step failed:", smsErr);
+    // Alert the user so they can see why Twilio is failing (e.g. unverified number)
+    const { Alert } = await import('react-native');
+    Alert.alert("SMS Failed ⚠️", `Twilio could not send the SMS: ${smsErr.message || 'Unknown error'}. The emergency call will still be attempted.`);
   }
 
   // 2. Make Automated Call ONLY to the Primary Contact
   console.log(`[Escalation] Triggering call to primary: ${primaryPhone}`);
-  const twiml = `<Response>
-    <Say voice="alice" loop="2">Safety Alert for ${settings.userName || 'User'}. Their cab has deviated from its route. Please check on them immediately. Are they safe? We have sent an SMS with their live location.</Say>
-  </Response>`;
   
   try {
     await makeTwilioCall([primaryPhone], twiml, settings.twilioSid, settings.twilioToken, settings.twilioNumber);

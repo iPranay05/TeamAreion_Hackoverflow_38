@@ -572,7 +572,34 @@ export default function MapScreen() {
             <View style={{ gap: Spacing.sm }}>
               {rideState.tripType === 'walking' && (
                 <SafeWalkTimer 
-                  onTimeout={() => Alert.alert("SOS Triggered", "Emergency contacts will be notified.")} 
+                  onTimeout={async () => {
+                    const { startSOSAdvertising } = await import('../../utils/bluetoothSOS');
+                    Alert.alert("Safe Walk Timeout 🚨", "SOS triggered! Notifying your emergency contacts...");
+                    
+                    // 1. Scalate to family (SMS + Call)
+                    await escalateToFamily(null, location, settings, 'walk');
+                    
+                    // 2. Start Bluetooth Advertising for nearby guardians
+                    await startSOSAdvertising(settings.userName || 'SafeWalk User');
+                    
+                    // 3. Log to Supabase for Admin Dashboard
+                    try {
+                      const { data: userData } = await supabase.auth.getUser();
+                      if (userData?.user) {
+                        await supabase.from('emergency_alerts').insert([{
+                          user_id: userData.user.id,
+                          user_name: settings.userName,
+                          user_phone: userData.user.phone || '',
+                          latitude: location?.latitude,
+                          longitude: location?.longitude,
+                          status: 'active',
+                          police_status: 'none'
+                        }]);
+                      }
+                    } catch (e) {
+                      console.error("Failed to log timeout SOS to Supabase:", e);
+                    }
+                  }} 
                   destination={rideState.destination} 
                   onCancel={stopRide}
                 />

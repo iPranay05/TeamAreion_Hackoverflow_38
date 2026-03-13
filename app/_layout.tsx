@@ -16,7 +16,6 @@ import { isOffRoute } from '../utils/routeMonitor';
 import { triggerLoudAlarm, escalateToFamily, escalateToPolice } from '../utils/emergencyEscalation';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
-import SafetyAIChatbot from '../components/SafetyAIChatbot';
 
 // Notification handler setup is moved inside RootLayout useEffect to prevent Expo Go crashes
 
@@ -24,15 +23,8 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
   const { settings, updateSettings } = useSettings();
   const { rideState, setEmergencyPhase, setEscalationTimer } = useSafeRide();
   const [alarmSound, setAlarmSound] = useState<any>(null);
-  const [isMounted, setIsMounted] = useState(false);
   const [nearbyAlert, setNearbyAlert] = useState<any>(null);
   const [offlineSOSSignal, setOfflineSOSSignal] = useState<any>(null);
-
-  useEffect(() => {
-    // Delay chatbot mount for better initial load performance
-    const timer = setTimeout(() => setIsMounted(true), 1000);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     // Debug shake detector
@@ -418,8 +410,7 @@ function GlobalSOSHandler({ children, session }: { children: React.ReactNode; se
   return (
     <>
       {children}
-      {/* Only show chatbot when user is authenticated (not on auth pages) */}
-      {isMounted && session && <SafetyAIChatbot />}
+      {/* Only show emergency overlays when needed */}
       {rideState.emergencyPhase !== 'NONE' && (
         <View style={gs.emergencyOverlay}>
           <Ionicons name="alert-circle" size={80} color={Colors.sos} />

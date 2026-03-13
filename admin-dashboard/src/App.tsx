@@ -84,6 +84,38 @@ const MapMarker = ({ type, text }: { type: 'incident' | 'safe' | 'alert', text?:
   </div>
 );
 
+const matchVideoExtension = (url: string) => {
+  const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.m4v'];
+  return videoExtensions.some(ext => url.toLowerCase().includes(ext));
+};
+
+const MediaComponent = ({ url }: { url: string }) => {
+  const [isError, setIsError] = useState(false);
+  const isVideo = matchVideoExtension(url);
+
+  if (isVideo || isError) {
+    return (
+      <video 
+        src={url} 
+        controls 
+        style={{ width: '100%', maxHeight: '400px', display: 'block', backgroundColor: '#000' }} 
+        onError={(e) => {
+          if (isError) console.error("Media failed to load as both image and video:", e);
+        }}
+      />
+    );
+  }
+
+  return (
+    <img 
+      src={url} 
+      alt="Incident Report Media" 
+      style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', display: 'block' }} 
+      onError={() => setIsError(true)}
+    />
+  );
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [complaints, setComplaints] = useState<Complaint[]>([]);
@@ -478,11 +510,7 @@ export default function App() {
                     
                     {c.media_url && c.media_url.startsWith('http') && (
                       <div style={{ marginBottom: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                        <img 
-                          src={c.media_url} 
-                          alt="Incident Report Media" 
-                          style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', display: 'block' }} 
-                        />
+                        <MediaComponent url={c.media_url} />
                       </div>
                     )}
                     

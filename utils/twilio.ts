@@ -12,8 +12,9 @@ const encodeBase64 = (input: string) => {
 export const sendTwilioSMS = async (to: string | string[], body: string, sid: string, token: string, fromNumber: string) => {
   console.log(`[Twilio] Sending SMS to: ${Array.isArray(to) ? to.join(', ') : to}`);
   if (!sid || sid === 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') {
-    console.error('[Twilio] Invalid SID detected');
-    throw new Error('Missing or invalid Twilio SID. Check Settings.');
+    const err = 'Missing or invalid Twilio SID. Check Settings.';
+    console.error(`[Twilio] ${err}`);
+    throw new Error(err);
   }
   if (!sid || !token || !fromNumber) throw new Error('Missing Twilio Credentials. Please configure them in Settings.');
   
@@ -32,27 +33,42 @@ export const sendTwilioSMS = async (to: string | string[], body: string, sid: st
     data.append('From', fromNumber.trim());
     data.append('Body', body);
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: data.toString()
-    });
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: data.toString()
+      });
 
-    if (!res.ok) {
-      const err = await res.json();
-      console.error(`[Twilio] SMS failed for ${phone}:`, err);
-      throw new Error(err.message || 'Twilio API Error');
+      if (!res.ok) {
+        const errData = await res.json();
+        console.error(`[Twilio] SMS API Error for ${phone}:`, errData);
+        throw new Error(errData.message || `Twilio Error ${res.status}`);
+      }
+      
+      console.log(`[Twilio] SMS successfully sent to ${phone}`);
+      return phone;
+    } catch (e: any) {
+      console.error(`[Twilio] Fetch/SMS Error for ${phone}:`, e);
+      throw e;
     }
-    console.log(`[Twilio] SMS successfully sent to ${phone}`);
   }));
 
-  const failed = results.filter(r => r.status === 'rejected');
-  if (failed.length > 0 && failed.length === results.length) {
-    throw new Error('Failed to send SMS to any contact.');
+  const errors = results
+    .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    .map(r => r.reason.message);
+
+  if (errors.length > 0) {
+    console.warn(`[Twilio] Failed to send some/all SMS: ${errors.join(', ')}`);
+    // If all failed, throw. If some failed, we still returning true later but we logged it.
+    if (errors.length === recipients.length) {
+      throw new Error(`SMS Failed: ${errors[0]}`);
+    }
   }
+
   return true;
 };
 

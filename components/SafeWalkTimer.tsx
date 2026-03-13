@@ -97,8 +97,16 @@ export default function SafeWalkTimer({
       <Modal visible={pick} transparent animationType="slide">
         <View style={s.mod}><View style={s.modC}>
           <Text style={s.modT}>Set Walk Duration</Text>
-          {[5,10,15,30,60].map(m => (
-            <TouchableOpacity key={m} style={[s.dBtn, mins===m && s.dBtnS]} onPress={() => setMins(m)}><Text style={[s.dTxt, mins===m && s.dTxtS]}>{m} minutes</Text></TouchableOpacity>
+          {[0.25, 5, 10, 15, 30, 60].map(m => (
+            <TouchableOpacity 
+              key={m} 
+              style={[s.dBtn, mins===m && s.dBtnS]} 
+              onPress={() => setMins(m)}
+            >
+              <Text style={[s.dTxt, mins===m && s.dTxtS]}>
+                {m === 0.25 ? '15 seconds' : `${m} minutes`}
+              </Text>
+            </TouchableOpacity>
           ))}
           <TouchableOpacity style={s.sBtn} onPress={start}><Text style={s.sBtnTxt}>Start Timer</Text></TouchableOpacity>
           <TouchableOpacity onPress={() => setPick(false)} style={s.cBtn}><Text style={s.cBtnTxt}>Cancel</Text></TouchableOpacity>
