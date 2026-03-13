@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Accelerometer } from 'expo-sensors';
 import { Vibration } from 'react-native';
 
-const SHAKE_THRESHOLD = 1.85; // Increased from 1.35 (less sensitive)
+const SHAKE_THRESHOLD = 2.85; // Increased from 1.35 (less sensitive)
 const PATTERN_WINDOW_MS = 3000;
 const DEBOUNCE_MS = 300;
 

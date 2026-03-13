@@ -32,10 +32,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         currentSettings = { 
           ...defaultSettings, 
           ...saved,
-          twilioSid: process.env.EXPO_PUBLIC_TWILIO_SID || saved.twilioSid || defaultSettings.twilioSid,
-          twilioToken: process.env.EXPO_PUBLIC_TWILIO_TOKEN || saved.twilioToken || defaultSettings.twilioToken,
-          twilioNumber: process.env.EXPO_PUBLIC_TWILIO_NUMBER || saved.twilioNumber || defaultSettings.twilioNumber
         };
+        
+        // Force ENV variables to override saved settings if they exist
+        if (process.env.EXPO_PUBLIC_TWILIO_SID) currentSettings.twilioSid = process.env.EXPO_PUBLIC_TWILIO_SID;
+        if (process.env.EXPO_PUBLIC_TWILIO_TOKEN) currentSettings.twilioToken = process.env.EXPO_PUBLIC_TWILIO_TOKEN;
+        if (process.env.EXPO_PUBLIC_TWILIO_NUMBER) currentSettings.twilioNumber = process.env.EXPO_PUBLIC_TWILIO_NUMBER;
       }
       
       setSettings(currentSettings);
